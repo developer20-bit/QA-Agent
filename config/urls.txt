@@ -1,5 +1,3 @@
-# One site root URL per line (https://). Lines starting with # are ignored.
-# Crawl stays on the same origin; internal links are checked up to --max-pages and --max-link-checks.
 https://www.nwface.com/
 https://www.proh2opressurewash.com
 https://www.jiyacosmetic.com

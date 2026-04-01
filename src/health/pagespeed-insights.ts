@@ -1,7 +1,43 @@
 import pLimit from "p-limit";
-import type { CrawlSiteResult, PageFetchRecord, PageSpeedInsightRecord } from "./types.js";
+import type { CrawlSiteResult, PageFetchRecord, PageSpeedInsightRecord, PageSpeedInsightsBundle } from "./types.js";
 
 const PSI_BASE = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
+
+/** Pull `error.message` from Google API JSON error bodies (HTTP 4xx/5xx). */
+function extractGoogleApiErrorMessage(body: string): string | undefined {
+  try {
+    const j = JSON.parse(body) as { error?: { message?: string } };
+    const m = j.error?.message;
+    return typeof m === "string" && m.length > 0 ? m : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Shorter, actionable copy for common Lighthouse/PSI failures. */
+function formatPsiFailureMessage(raw: string): string {
+  const t = raw.trim();
+  if (/NO_FCP/i.test(t)) {
+    return (
+      "NO_FCP — Lighthouse did not detect a painted frame. Common with cookie/consent overlays, slow third parties, or flaky lab runs. " +
+      "Try again later, use a single PageSpeed strategy (mobile or desktop), or run without --pagespeed for this URL."
+    );
+  }
+  /** Google’s Chrome in their lab timed out or could not complete the navigation (not QA-Agent’s crawl). */
+  if (
+    /FAILED_DOCUMENT_REQUEST/i.test(t) ||
+    /net::ERR_TIMED_OUT|ERR_CONNECTION_TIMED_OUT|ERR_TIMED_OUT/i.test(t) ||
+    /Lighthouse was unable to reliably load the page/i.test(t)
+  ) {
+    return (
+      "FAILED_DOCUMENT_REQUEST / timeout — Google’s Lighthouse could not load this URL in time from their datacenter (e.g. net::ERR_TIMED_OUT). " +
+      "Heavy pages, slow TTFB, geo/WAF rules, or blocking Google’s IPs can cause this. If https://pagespeed.web.dev/ fails the same way, fix hosting/CDN/performance; " +
+      "QA-Agent only calls the API. Optional: raise --pagespeed-timeout-ms for the HTTP wait to Google (does not extend Lighthouse’s own page load budget)."
+    );
+  }
+  if (t.length > 320) return `${t.slice(0, 317)}…`;
+  return t;
+}
 
 function score01To100(score: number | null | undefined): number | undefined {
   if (score == null || Number.isNaN(score)) return undefined;
@@ -20,7 +56,8 @@ function auditDisplay(audits: Record<string, { displayValue?: string }> | undefi
 
 /**
  * Lab data from Google PageSpeed Insights API v5 (Lighthouse).
- * Requires `PAGESPEED_API_KEY` or `GOOGLE_PAGESPEED_API_KEY`.
+ * Key env: `PAGESPEED_API_KEY` (preferred), or `GOOGLE_PAGESPEED_API_KEY`, or `GOOGLE_API_KEY`.
+ * Not used for Gemini — use `GEMINI_API_KEY` / `GOOGLE_AI_API_KEY` for AI summaries.
  */
 export async function fetchPageSpeedInsights(
   pageUrl: string,
@@ -46,11 +83,12 @@ export async function fetchPageSpeedInsights(
     const durationMs = Date.now() - t0;
     const text = await res.text();
     if (!res.ok) {
+      const extracted = extractGoogleApiErrorMessage(text) ?? text;
       return {
         url: pageUrl,
         strategy: options.strategy,
         durationMs,
-        error: `PageSpeed API HTTP ${res.status}: ${text.slice(0, 280)}`,
+        error: `PageSpeed API HTTP ${res.status}: ${formatPsiFailureMessage(extracted)}`,
       };
     }
     let json: unknown;
@@ -61,7 +99,12 @@ export async function fetchPageSpeedInsights(
     }
     const err = (json as { error?: { message?: string } }).error;
     if (err?.message) {
-      return { url: pageUrl, strategy: options.strategy, durationMs, error: err.message };
+      return {
+        url: pageUrl,
+        strategy: options.strategy,
+        durationMs,
+        error: formatPsiFailureMessage(err.message),
+      };
     }
     const lh = (json as { lighthouseResult?: unknown }).lighthouseResult as
       | {
@@ -101,7 +144,6 @@ export async function fetchPageSpeedInsights(
       tti: auditDisplay(audits, "interactive"),
     };
 
-    /** Known Lighthouse audits that often surface as “opportunities” in the PSI UI. */
     const OPPORTUNITY_AUDIT_IDS = [
       "render-blocking-resources",
       "unused-javascript",
@@ -150,7 +192,10 @@ export async function fetchPageSpeedInsights(
   }
 }
 
-/** Resolve API key from environment (same names Google docs often use). */
+/**
+ * PageSpeed Insights API key only (first non-empty wins).
+ * Do not confuse with `GEMINI_API_KEY` — different Google product.
+ */
 export function resolvePageSpeedApiKey(): string | undefined {
   return (
     process.env.PAGESPEED_API_KEY?.trim() ||
@@ -163,13 +208,13 @@ const PSI_MAX_URLS_CAP = 500;
 
 /**
  * Runs PageSpeed Insights for up to `maxUrls` successfully crawled HTML pages (HTTP 200, ok).
- * Mutates each matching `PageFetchRecord` with `insights`.
+ * Mutates each matching `PageFetchRecord` with `insights` (single record or mobile/desktop bundle).
  */
 export async function attachPageSpeedInsights(
   crawl: CrawlSiteResult,
   options: {
     apiKey: string;
-    strategy: "mobile" | "desktop";
+    strategies: ("mobile" | "desktop")[];
     maxUrls: number;
     concurrency: number;
     timeoutMs: number;
@@ -178,21 +223,41 @@ export async function attachPageSpeedInsights(
   const t0 = Date.now();
   const cap = Math.min(options.maxUrls <= 0 ? PSI_MAX_URLS_CAP : options.maxUrls, PSI_MAX_URLS_CAP);
   const candidates = crawl.pages.filter((p) => p.ok && p.status === 200).slice(0, cap);
+  const strategies = options.strategies.length > 0 ? options.strategies : (["desktop"] as const);
   const limit = pLimit(Math.max(1, options.concurrency));
+
   await Promise.all(
-    candidates.map((p: PageFetchRecord) =>
+    candidates.map((p) =>
       limit(async () => {
-        p.insights = await fetchPageSpeedInsights(p.url, {
-          apiKey: options.apiKey,
-          strategy: options.strategy,
-          timeoutMs: options.timeoutMs,
-        });
+        if (strategies.length === 1) {
+          const strategy = strategies[0]!;
+          p.insights = await fetchPageSpeedInsights(p.url, {
+            apiKey: options.apiKey,
+            strategy,
+            timeoutMs: options.timeoutMs,
+          });
+          return;
+        }
+        const bundle: PageSpeedInsightsBundle = {};
+        await Promise.all(
+          strategies.map(async (strategy) => {
+            const rec = await fetchPageSpeedInsights(p.url, {
+              apiKey: options.apiKey,
+              strategy,
+              timeoutMs: options.timeoutMs,
+            });
+            if (strategy === "mobile") bundle.mobile = rec;
+            if (strategy === "desktop") bundle.desktop = rec;
+          }),
+        );
+        p.insights = bundle;
       }),
     ),
   );
+
   const totalDurationMs = Date.now() - t0;
   crawl.pageSpeedInsightsMeta = {
-    strategy: options.strategy,
+    strategies: [...strategies],
     totalDurationMs,
     urlsAnalyzed: candidates.length,
   };

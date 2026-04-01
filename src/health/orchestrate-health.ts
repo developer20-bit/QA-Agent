@@ -1,9 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pLimit from "p-limit";
+import { captureStartPageScreenshotToDir } from "./capture-start-screenshot.js";
 import { crawlSite } from "./crawl-site.js";
-import { healthSiteOutputDirName, loadUrlsFromTxt, siteIdFromUrl } from "./load-urls.js";
+import { dedupeNormalizedUrls, healthSiteOutputDirName, loadUrlsFromTxt, siteIdFromUrl } from "./load-urls.js";
+import {
+  buildGeminiPayloadFromReports,
+  generateGeminiQaSummary,
+  resolveGeminiApiKey,
+} from "./gemini-report.js";
 import { attachPageSpeedInsights, resolvePageSpeedApiKey } from "./pagespeed-insights.js";
+import { attachViewportChecks } from "./viewport-check.js";
 import type { HealthProgressEvent } from "./progress-events.js";
 import { masterReportBaseName, perSiteReportBaseName } from "./report-names.js";
 import {
@@ -22,6 +29,10 @@ function runId(): string {
 
 export interface HealthRunMeta {
   runId: string;
+  /** When the run started (ISO 8601). Omitted in older run-meta.json files. */
+  startedAt?: string;
+  /** Wall-clock duration for the full run (ms). Omitted in older files. */
+  durationMsTotal?: number;
   generatedAt: string;
   urlsSource: "file" | "inline";
   urlsFile?: string;
@@ -38,6 +49,16 @@ export interface HealthRunMeta {
   }[];
   masterHtmlHref: string;
   indexHtmlHref: string;
+  /** Relative path to Markdown AI summary when generated. */
+  geminiSummaryHref?: string;
+  aiSummary?: {
+    generatedAt?: string;
+    skippedReason?: string;
+  };
+  features?: {
+    pageSpeedStrategies?: ("mobile" | "desktop")[];
+    viewportCheck?: boolean;
+  };
 }
 
 export async function orchestrateHealthCheck(options: {
@@ -55,11 +76,20 @@ export async function orchestrateHealthCheck(options: {
   /** Optional Lighthouse lab data via Google PageSpeed Insights API. */
   pageSpeed?: {
     enabled: boolean;
-    strategy: "mobile" | "desktop";
+    strategies: ("mobile" | "desktop")[];
     maxUrls: number;
     concurrency: number;
     timeoutMs: number;
   };
+  /** Optional Chromium mobile/desktop viewport smoke loads. */
+  viewportCheck?: {
+    enabled: boolean;
+    maxUrls: number;
+    timeoutMs: number;
+    concurrency: number;
+  };
+  /** Optional Gemini Markdown executive summary (requires GEMINI_API_KEY). */
+  gemini?: boolean;
   onProgress?: (event: HealthProgressEvent) => void;
 }): Promise<{ runId: string; runDir: string; siteFailures: number }> {
   const rid = runId();
@@ -70,7 +100,7 @@ export async function orchestrateHealthCheck(options: {
   let urlsSource: "file" | "inline";
   let resolvedUrlsFile: string | undefined;
   if (options.urls && options.urls.length > 0) {
-    urls = [...options.urls];
+    urls = dedupeNormalizedUrls(options.urls);
     urlsSource = "inline";
   } else if (options.urlsFile) {
     urls = await loadUrlsFromTxt(options.urlsFile);
@@ -84,6 +114,8 @@ export async function orchestrateHealthCheck(options: {
   }
 
   const emit = options.onProgress;
+  const runStartedAt = new Date().toISOString();
+  const runStartWallMs = Date.now();
   const sitesMeta = urls.map((u) => ({
     siteId: siteIdFromUrl(u),
     hostname: new URL(u).hostname,
@@ -94,6 +126,7 @@ export async function orchestrateHealthCheck(options: {
     runId: rid,
     runDir,
     totalSites: urls.length,
+    startedAt: runStartedAt,
     sites: sitesMeta,
   });
 
@@ -123,6 +156,12 @@ export async function orchestrateHealthCheck(options: {
         requestTimeoutMs: options.requestTimeoutMs,
         fetchConcurrency: options.fetchConcurrency,
       });
+      const siteDirEarly = path.join(runDir, outputDirName);
+      crawl.startPageScreenshot = await captureStartPageScreenshotToDir({
+        startUrl,
+        siteOutDir: siteDirEarly,
+        requestTimeoutMs: options.requestTimeoutMs,
+      });
       const ps = options.pageSpeed;
       if (ps?.enabled) {
         const apiKey = resolvePageSpeedApiKey();
@@ -133,10 +172,18 @@ export async function orchestrateHealthCheck(options: {
         }
         await attachPageSpeedInsights(crawl, {
           apiKey,
-          strategy: ps.strategy,
+          strategies: ps.strategies.length > 0 ? ps.strategies : ["desktop"],
           maxUrls: ps.maxUrls,
           concurrency: ps.concurrency,
           timeoutMs: ps.timeoutMs,
+        });
+      }
+      const vc = options.viewportCheck;
+      if (vc?.enabled) {
+        await attachViewportChecks(crawl, {
+          maxUrls: vc.maxUrls,
+          timeoutMs: vc.timeoutMs,
+          concurrency: vc.concurrency,
         });
       }
     } catch (err) {
@@ -201,9 +248,12 @@ export async function orchestrateHealthCheck(options: {
     const tasks = urls.map((startUrl, idx) => limit(() => runOneSite(idx, startUrl)));
     results.push(...(await Promise.all(tasks)));
   }
+  /** Same order as the URL list (Promise.all preserves index order; this is a safety net). */
+  results.sort((a, b) => urls.indexOf(a.startUrl) - urls.indexOf(b.startUrl));
   const siteFailures = results.filter((r) => r.failed).length;
 
   const runFinishedAt = new Date().toISOString();
+  const runWallDurationMs = Math.max(0, Date.now() - runStartWallMs);
   const masterBase = masterReportBaseName(runFinishedAt);
   await writeMasterHealthReports({
     reports: results.map((r) => {
@@ -251,8 +301,35 @@ export async function orchestrateHealthCheck(options: {
     "utf8",
   );
 
+  let geminiSummaryHref: string | undefined;
+  let aiSummary: HealthRunMeta["aiSummary"] | undefined;
+
+  if (options.gemini) {
+    if (!resolveGeminiApiKey()) {
+      aiSummary = { skippedReason: "GEMINI_API_KEY not set" };
+    } else {
+      try {
+        const cleanReports = results.map((r) => {
+          const { failed: _f, ...rep } = r;
+          return rep;
+        });
+        const payload = buildGeminiPayloadFromReports(cleanReports, rid, runFinishedAt);
+        const md = await generateGeminiQaSummary(payload);
+        await writeFile(path.join(runDir, "gemini-summary.md"), md, "utf8");
+        geminiSummaryHref = "./gemini-summary.md";
+        aiSummary = { generatedAt: new Date().toISOString() };
+      } catch (e) {
+        aiSummary = {
+          skippedReason: e instanceof Error ? e.message : String(e),
+        };
+      }
+    }
+  }
+
   const runMeta: HealthRunMeta = {
     runId: rid,
+    startedAt: runStartedAt,
+    durationMsTotal: runWallDurationMs,
     generatedAt: runFinishedAt,
     urlsSource,
     urlsFile: resolvedUrlsFile,
@@ -269,6 +346,12 @@ export async function orchestrateHealthCheck(options: {
     })),
     masterHtmlHref: "./master.html",
     indexHtmlHref: "./index.html",
+    geminiSummaryHref,
+    aiSummary,
+    features: {
+      pageSpeedStrategies: options.pageSpeed?.enabled ? options.pageSpeed.strategies : undefined,
+      viewportCheck: options.viewportCheck?.enabled === true,
+    },
   };
   await writeFile(path.join(runDir, "run-meta.json"), JSON.stringify(runMeta, null, 2), "utf8");
 
@@ -290,6 +373,8 @@ export async function orchestrateHealthCheck(options: {
     runDir,
     siteFailures,
     totalSites: urls.length,
+    endedAt: runFinishedAt,
+    durationMs: runWallDurationMs,
   });
 
   return { runId: rid, runDir, siteFailures };

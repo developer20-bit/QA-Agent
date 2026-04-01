@@ -3,11 +3,17 @@ import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import formidable from "formidable";
 import type { HealthRunMeta } from "./orchestrate-health.js";
 import type { HealthProgressEvent } from "./progress-events.js";
 import { renderHtmlFileToPdf } from "./html-to-pdf.js";
 import { parseUrlsFromText } from "./load-urls.js";
 import { orchestrateHealthCheck } from "./orchestrate-health.js";
+import { extractUrlsFromPdfBuffer } from "./pdf-urls.js";
+
+function webDistRoot(): string {
+  return path.join(process.cwd(), "web", "dist");
+}
 
 function isPathInsideRoot(root: string, candidate: string): boolean {
   const r = path.resolve(root);
@@ -972,10 +978,40 @@ export async function runHealthDashboard(options: {
     void (async () => {
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${options.port}`);
 
-      if (req.method === "GET" && url.pathname === "/") {
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(dashboardHtml());
-        return;
+      if (req.method === "GET" && !url.pathname.startsWith("/api") && !url.pathname.startsWith("/reports/")) {
+        const dist = webDistRoot();
+        let spaHtml: string | null = null;
+        try {
+          spaHtml = await readFile(path.join(dist, "index.html"), "utf8");
+        } catch {
+          spaHtml = null;
+        }
+        if (spaHtml) {
+          const decoded = decodeURIComponent(url.pathname);
+          const rel = decoded.replace(/^\/+/, "") || "index.html";
+          const norm = path.normalize(rel).replace(/^(\.\.(\/|\\|$))+/, "");
+          const abs = path.join(dist, norm);
+          if (isPathInsideRoot(dist, abs)) {
+            try {
+              const st = await stat(abs);
+              if (st.isFile()) {
+                res.writeHead(200, { "Content-Type": mimeFor(abs) });
+                createReadStream(abs).pipe(res);
+                return;
+              }
+            } catch {
+              /* SPA fallback */
+            }
+          }
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(spaHtml);
+          return;
+        }
+        if (url.pathname === "/") {
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(dashboardHtml());
+          return;
+        }
       }
 
       if (req.method === "GET" && url.pathname === "/api/history") {
@@ -985,6 +1021,67 @@ export async function runHealthDashboard(options: {
           "Cache-Control": "no-store",
         });
         res.end(JSON.stringify(data));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/gemini-summary") {
+        const runId = url.searchParams.get("runId");
+        if (!runId || !isSafeRunIdSegment(runId)) {
+          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Bad runId");
+          return;
+        }
+        const p = path.join(outRoot, runId, "gemini-summary.md");
+        if (!isPathInsideRoot(outRoot, p)) {
+          res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Forbidden");
+          return;
+        }
+        try {
+          const text = await readFile(p, "utf8");
+          res.writeHead(200, {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(text);
+        } catch {
+          res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Not found");
+        }
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/parse-urls-file") {
+        const form = formidable({
+          maxFileSize: 25 * 1024 * 1024,
+          allowEmptyFiles: false,
+        });
+        let files: formidable.Files;
+        try {
+          [, files] = await form.parse(req);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: msg }));
+          return;
+        }
+        const fileList = files.file ?? files.upload ?? [];
+        const first = Array.isArray(fileList) ? fileList[0] : fileList;
+        if (!first || !first.filepath) {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "Expected multipart field 'file'" }));
+          return;
+        }
+        const buf = await readFile(first.filepath);
+        const name = (first.originalFilename ?? "").toLowerCase();
+        let urls: string[];
+        if (name.endsWith(".pdf")) {
+          urls = await extractUrlsFromPdfBuffer(buf);
+        } else {
+          urls = parseUrlsFromText(buf.toString("utf8"));
+        }
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ urls, count: urls.length }));
         return;
       }
 
@@ -1115,7 +1212,7 @@ export async function runHealthDashboard(options: {
           return;
         }
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ ok: true, overrides: cleaned, savedAt: new Date().toISOString() }));
         return;
       }
 
@@ -1133,9 +1230,15 @@ export async function runHealthDashboard(options: {
           res.end("Bad request");
           return;
         }
-        let payload: { urlsText?: string; urls?: string[] };
+        let payload: {
+          urlsText?: string;
+          urls?: string[];
+          pageSpeedBoth?: boolean;
+          viewportCheck?: boolean;
+          gemini?: boolean;
+        };
         try {
-          payload = JSON.parse(body) as { urlsText?: string; urls?: string[] };
+          payload = JSON.parse(body) as typeof payload;
         } catch {
           res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
           res.end("Invalid JSON");
@@ -1156,10 +1259,35 @@ export async function runHealthDashboard(options: {
           res.end("No valid http(s) URLs found");
           return;
         }
+
+        const runExtra: Partial<HealthDashboardOrchestrateOptions> = { urls };
+        const ps = baseOrchestrate.pageSpeed;
+        if (payload.pageSpeedBoth) {
+          runExtra.pageSpeed = {
+            enabled: true,
+            strategies: ["mobile", "desktop"],
+            maxUrls: ps?.maxUrls ?? 25,
+            concurrency: ps?.concurrency ?? 1,
+            timeoutMs: ps?.timeoutMs ?? 120_000,
+          };
+        }
+        const vc = baseOrchestrate.viewportCheck;
+        if (payload.viewportCheck) {
+          runExtra.viewportCheck = {
+            enabled: true,
+            maxUrls: vc?.maxUrls ?? 15,
+            timeoutMs: vc?.timeoutMs ?? 60_000,
+            concurrency: vc?.concurrency ?? 1,
+          };
+        }
+        if (payload.gemini) {
+          runExtra.gemini = true;
+        }
+
         runInFlight = true;
         res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ accepted: true, urlCount: urls.length }));
-        void runOrchestrate({ urls })
+        void runOrchestrate(runExtra)
           .then((r) => {
             lastResult = r;
           })

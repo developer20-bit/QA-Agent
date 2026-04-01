@@ -5,6 +5,8 @@ export type HealthProgressEvent =
       runId: string;
       runDir: string;
       totalSites: number;
+      /** ISO 8601 — wall-clock when this run began (server). */
+      startedAt: string;
       sites: { siteId: string; hostname: string; startUrl: string }[];
     }
   | {
@@ -47,5 +49,9 @@ export type HealthProgressEvent =
       runDir: string;
       siteFailures: number;
       totalSites: number;
+      /** ISO 8601 — when the run finished. */
+      endedAt: string;
+      /** Wall time from run start to finish (ms). */
+      durationMs: number;
     }
   | { type: "run_error"; message: string };

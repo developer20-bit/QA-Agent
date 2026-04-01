@@ -1,0 +1,72 @@
+:root {
+  color-scheme: dark;
+  --bg0: #050508;
+  --bg1: #0a0c12;
+  --bg-app: linear-gradient(180deg, #050508 0%, #080a10 45%, #06060a 100%);
+  --sidebar-bg: rgba(8, 10, 16, 0.78);
+  --sidebar-active: rgba(59, 130, 246, 0.12);
+  --glass: rgba(255, 255, 255, 0.04);
+  --glass2: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.09);
+  --text: rgba(255, 255, 255, 0.94);
+  --muted: rgba(255, 255, 255, 0.52);
+  --accent: #3b82f6;
+  --accent2: #22d3ee;
+  --ok: #34d399;
+  --bad: #fb7185;
+  --radius: 20px;
+  --radius-sm: 12px;
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: var(--font);
+  background: radial-gradient(1200px 800px at 10% -10%, rgba(59, 130, 246, 0.18), transparent),
+    radial-gradient(900px 600px at 90% 0%, rgba(34, 211, 238, 0.12), transparent),
+    linear-gradient(180deg, var(--bg0) 0%, var(--bg1) 40%, #030306 100%);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent2);
+  text-decoration: none;
+  font-weight: 500;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+@keyframes qa-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}

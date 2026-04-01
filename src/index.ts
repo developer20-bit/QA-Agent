@@ -2,6 +2,24 @@
 import "dotenv/config";
 import path from "node:path";
 import { Command } from "commander";
+
+/** Read integer from env, or use fallback (after dotenv). */
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name]?.trim();
+  if (raw == null || raw === "") return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < min) return fallback;
+  return Math.min(n, max);
+}
+
+/** Parallel fetches per site — main speed lever for large uncapped crawls. */
+const DEFAULT_FETCH_CONCURRENCY = String(envInt("QA_AGENT_FETCH_CONCURRENCY", 16, 1, 256));
+/** How many sites to crawl at once (health command). */
+const DEFAULT_SITE_CONCURRENCY = String(envInt("QA_AGENT_SITE_CONCURRENCY", 4, 1, 64));
+const DEFAULT_PAGESPEED_CONCURRENCY = String(envInt("QA_AGENT_PAGESPEED_CONCURRENCY", 3, 1, 64));
+/** Max wait (ms) for each PageSpeed API HTTP response; env QA_AGENT_PAGESPEED_TIMEOUT_MS */
+const DEFAULT_PAGESPEED_TIMEOUT_MS = String(envInt("QA_AGENT_PAGESPEED_TIMEOUT_MS", 120_000, 10_000, 600_000));
+const DEFAULT_VIEWPORT_CONCURRENCY = String(envInt("QA_AGENT_VIEWPORT_CONCURRENCY", 2, 1, 32));
 import { loadSitesConfig } from "./config/load.js";
 import { orchestrateRun } from "./orchestrate.js";
 import { runHealthDashboard } from "./health/health-dashboard-server.js";
@@ -30,8 +48,8 @@ program
   .option("--out <dir>", "Output root folder (default: artifacts/health)", "artifacts/health")
   .option(
     "--concurrency <n>",
-    "How many sites to crawl at once (default 1 = one URL line after another; raise for parallel sites)",
-    "1",
+    `How many sites to crawl at once (default ${DEFAULT_SITE_CONCURRENCY}; env QA_AGENT_SITE_CONCURRENCY; use 1 for strictly sequential)`,
+    DEFAULT_SITE_CONCURRENCY,
   )
   .option(
     "--max-pages <n>",
@@ -50,8 +68,8 @@ program
   )
   .option(
     "--fetch-concurrency <n>",
-    "Parallel HTTP requests per site while crawling and checking links (lower = fewer timeouts on slow hosts; default 4)",
-    "4",
+    `Parallel HTTP requests per site while crawling and checking links (default ${DEFAULT_FETCH_CONCURRENCY}; env QA_AGENT_FETCH_CONCURRENCY)`,
+    DEFAULT_FETCH_CONCURRENCY,
   )
   .option(
     "--serve",
@@ -65,14 +83,47 @@ program
     "After crawl, run Google PageSpeed Insights (Lighthouse lab) on crawled pages; set PAGESPEED_API_KEY",
     false,
   )
-  .option("--pagespeed-strategy <mobile|desktop>", "PageSpeed API device strategy", "desktop")
+  .option(
+    "--pagespeed-strategy <mobile|desktop|both>",
+    "PageSpeed API: one strategy or both (mobile + desktop lab)",
+    "desktop",
+  )
   .option(
     "--pagespeed-max-urls <n>",
     "Max URLs per site to analyze with PageSpeed (0 = up to 500; default 25)",
     "25",
   )
-  .option("--pagespeed-concurrency <n>", "Parallel PageSpeed API calls per site", "1")
-  .option("--pagespeed-timeout-ms <n>", "Timeout per PageSpeed API request (ms)", "120000")
+  .option(
+    "--pagespeed-concurrency <n>",
+    `Parallel PageSpeed API calls per site (per strategy; default ${DEFAULT_PAGESPEED_CONCURRENCY}; env QA_AGENT_PAGESPEED_CONCURRENCY)`,
+    DEFAULT_PAGESPEED_CONCURRENCY,
+  )
+  .option(
+    "--pagespeed-timeout-ms <n>",
+    `Timeout per PageSpeed API HTTP request (ms; default ${DEFAULT_PAGESPEED_TIMEOUT_MS}; env QA_AGENT_PAGESPEED_TIMEOUT_MS)`,
+    DEFAULT_PAGESPEED_TIMEOUT_MS,
+  )
+  .option(
+    "--viewport-check",
+    "After crawl, load each sampled URL in headless Chromium (mobile + desktop viewports)",
+    false,
+  )
+  .option(
+    "--viewport-max-urls <n>",
+    "Max URLs per site for viewport checks (default 15)",
+    "15",
+  )
+  .option("--viewport-timeout-ms <n>", "Navigation timeout per viewport load (ms)", "60000")
+  .option(
+    "--viewport-concurrency <n>",
+    `Parallel URLs for viewport checks per site (default ${DEFAULT_VIEWPORT_CONCURRENCY}; env QA_AGENT_VIEWPORT_CONCURRENCY)`,
+    DEFAULT_VIEWPORT_CONCURRENCY,
+  )
+  .option(
+    "--gemini",
+    "After the run, ask Gemini for an executive Markdown summary (set GEMINI_API_KEY)",
+    false,
+  )
   .action(
     async (opts: {
       urls?: string;
@@ -90,6 +141,11 @@ program
       pagespeedMaxUrls: string;
       pagespeedConcurrency: string;
       pagespeedTimeoutMs: string;
+      viewportCheck?: boolean;
+      viewportMaxUrls: string;
+      viewportTimeoutMs: string;
+      viewportConcurrency: string;
+      gemini?: boolean;
     }) => {
       const concurrency = Number.parseInt(opts.concurrency, 10);
       const maxPages = Number.parseInt(opts.maxPages, 10);
@@ -125,9 +181,17 @@ program
       const pagespeedMaxUrls = Number.parseInt(opts.pagespeedMaxUrls, 10);
       const pagespeedConcurrency = Number.parseInt(opts.pagespeedConcurrency, 10);
       const pagespeedTimeoutMs = Number.parseInt(opts.pagespeedTimeoutMs, 10);
+      const viewportMaxUrls = Number.parseInt(opts.viewportMaxUrls, 10);
+      const viewportTimeoutMs = Number.parseInt(opts.viewportTimeoutMs, 10);
+      const viewportConcurrency = Number.parseInt(opts.viewportConcurrency, 10);
+
       if (opts.pagespeed) {
-        if (opts.pagespeedStrategy !== "mobile" && opts.pagespeedStrategy !== "desktop") {
-          throw new Error(`Invalid pagespeed-strategy: ${opts.pagespeedStrategy} (use mobile or desktop)`);
+        if (
+          opts.pagespeedStrategy !== "mobile" &&
+          opts.pagespeedStrategy !== "desktop" &&
+          opts.pagespeedStrategy !== "both"
+        ) {
+          throw new Error(`Invalid pagespeed-strategy: ${opts.pagespeedStrategy} (use mobile, desktop, or both)`);
         }
         if (!Number.isFinite(pagespeedMaxUrls) || pagespeedMaxUrls < 0) {
           throw new Error(`Invalid pagespeed-max-urls: ${opts.pagespeedMaxUrls}`);
@@ -139,6 +203,27 @@ program
           throw new Error(`Invalid pagespeed-timeout-ms: ${opts.pagespeedTimeoutMs}`);
         }
       }
+
+      if (opts.viewportCheck) {
+        if (!Number.isFinite(viewportMaxUrls) || viewportMaxUrls < 1) {
+          throw new Error(`Invalid viewport-max-urls: ${opts.viewportMaxUrls}`);
+        }
+        if (!Number.isFinite(viewportTimeoutMs) || viewportTimeoutMs < 1) {
+          throw new Error(`Invalid viewport-timeout-ms: ${opts.viewportTimeoutMs}`);
+        }
+        if (!Number.isFinite(viewportConcurrency) || viewportConcurrency < 1) {
+          throw new Error(`Invalid viewport-concurrency: ${opts.viewportConcurrency}`);
+        }
+      }
+
+      const psStrategies: ("mobile" | "desktop")[] =
+        opts.pagespeed && opts.pagespeedStrategy === "both"
+          ? ["mobile", "desktop"]
+          : opts.pagespeed && opts.pagespeedStrategy === "mobile"
+            ? ["mobile"]
+            : opts.pagespeed
+              ? ["desktop"]
+              : [];
 
       const orchestrateBase = {
         ...(opts.urls ? { urlsFile: path.resolve(opts.urls) } : {}),
@@ -152,13 +237,24 @@ program
           ? {
               pageSpeed: {
                 enabled: true,
-                strategy: opts.pagespeedStrategy as "mobile" | "desktop",
+                strategies: psStrategies,
                 maxUrls: pagespeedMaxUrls,
                 concurrency: pagespeedConcurrency,
                 timeoutMs: pagespeedTimeoutMs,
               },
             }
           : {}),
+        ...(opts.viewportCheck
+          ? {
+              viewportCheck: {
+                enabled: true,
+                maxUrls: viewportMaxUrls,
+                timeoutMs: viewportTimeoutMs,
+                concurrency: viewportConcurrency,
+              },
+            }
+          : {}),
+        ...(opts.gemini ? { gemini: true } : {}),
       };
 
       const { runId, runDir, siteFailures } = opts.serve
@@ -177,7 +273,9 @@ program
         console.log(`\nDashboard running — paste URLs in the UI to start crawls and reports.`);
       }
       if (opts.serve) {
-        console.log(`Live UI: http://127.0.0.1:${servePort}/ (reports: /reports/<runId>/… · PDF: /api/pdf)`);
+        console.log(
+          `Live UI: http://127.0.0.1:${servePort}/ (React dashboard if web/dist built; reports: /reports/<runId>/… · PDF: /api/pdf)`,
+        );
       }
       process.exitCode = siteFailures > 0 ? 1 : 0;
     },

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { normalizeRootUrl } from "./normalize-url.js";
 
 /**
  * One root URL per line. Empty lines and lines starting with # are ignored.
@@ -22,22 +23,48 @@ export async function loadUrlsFromTxt(filePath: string): Promise<string[]> {
   return parseUrlsFromText(raw);
 }
 
-/** Parse one URL per line (same rules as the URLs file). */
+/** Parse one URL per line (same rules as the URLs file). Bare hostnames get `https://`. */
 export function parseUrlsFromText(raw: string): string[] {
   const lines = raw.split(/\r?\n/);
+  const seen = new Set<string>();
   const urls: string[] = [];
   for (const line of lines) {
     const t = line.trim();
     if (!t || t.startsWith("#")) continue;
-    try {
-      const u = new URL(t);
-      if (u.protocol !== "http:" && u.protocol !== "https:") continue;
-      urls.push(u.href);
-    } catch {
-      /* skip invalid */
-    }
+    const norm = normalizeRootUrl(t);
+    if (!norm) continue;
+    const key = canonicalUrlKey(norm);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    urls.push(norm);
   }
   return urls;
+}
+
+/** Normalize URL string for deduplication (same origin+path as `URL.href` after normalizeRootUrl). */
+function canonicalUrlKey(normalizedHref: string): string {
+  try {
+    return new URL(normalizedHref).href;
+  } catch {
+    return normalizedHref;
+  }
+}
+
+/**
+ * Drop duplicate roots (same normalized href). Use for inline URL lists from the dashboard API.
+ */
+export function dedupeNormalizedUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of urls) {
+    const norm = normalizeRootUrl(raw.trim());
+    if (!norm) continue;
+    const key = canonicalUrlKey(norm);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(norm);
+  }
+  return out;
 }
 
 export function siteIdFromUrl(url: string): string {

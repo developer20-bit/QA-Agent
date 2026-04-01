@@ -1,7 +1,40 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { PageFetchRecord, PageSpeedInsightRecord, SiteHealthReport } from "./types.js";
+import { bestPerformanceScore, flattenInsights, hasPageSpeedInsights } from "./insight-utils.js";
+import { healthSiteOutputDirName } from "./load-urls.js";
+import type {
+  CrawlSiteResult,
+  PageFetchRecord,
+  PageSpeedInsightRecord,
+  SiteHealthReport,
+  ViewportCheckRecord,
+} from "./types.js";
+
+function psiStrategiesLabel(meta: NonNullable<CrawlSiteResult["pageSpeedInsightsMeta"]>): string {
+  const m = meta as { strategies?: ("mobile" | "desktop")[]; strategy?: string };
+  if (m.strategies?.length) return m.strategies.join(" + ");
+  if (m.strategy) return m.strategy;
+  return "—";
+}
+
+function buildViewportRowsHtml(rows: ViewportCheckRecord[]): string {
+  return rows
+    .map((v) => {
+      const mOk = v.mobile.ok ? "cell-ok" : "cell-err";
+      const dOk = v.desktop.ok ? "cell-ok" : "cell-err";
+      return `<tr>
+  <td><a href="${esc(v.url)}">${esc(v.url)}</a></td>
+  <td class="num">${v.mobile.loadMs}</td>
+  <td class="${mOk}">${v.mobile.ok ? "OK" : "Fail"}</td>
+  <td class="num">${v.mobile.consoleErrorCount}</td>
+  <td class="num">${v.desktop.loadMs}</td>
+  <td class="${dOk}">${v.desktop.ok ? "OK" : "Fail"}</td>
+  <td class="num">${v.desktop.consoleErrorCount}</td>
+</tr>`;
+    })
+    .join("\n");
+}
 
 /** Shared styles for single-site and combined health HTML. */
 const HEALTH_REPORT_CSS = `
@@ -226,6 +259,28 @@ const HEALTH_REPORT_CSS = `
     .score-bad { background: rgba(255, 59, 48, 0.1); color: #b91c1c; border-color: rgba(255, 59, 48, 0.25) !important; }
     .score-warn { background: rgba(255, 149, 0, 0.12); color: #9a3412; border-color: rgba(255, 149, 0, 0.3) !important; }
     .score-good { background: rgba(52, 199, 89, 0.12); color: #166534; border-color: rgba(52, 199, 89, 0.3) !important; }
+    .screenshot-wrap {
+      margin-top: 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: var(--surface-solid);
+      box-shadow: var(--shadow);
+    }
+    .screenshot-img {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      vertical-align: top;
+    }
+    .master-thumb {
+      display: block;
+      max-width: 160px;
+      height: auto;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
     .report-footer {
       margin-top: 32px;
       padding-top: 16px;
@@ -560,6 +615,31 @@ function esc(s: string): string {
     .replaceAll('"', "&quot;");
 }
 
+function buildStartPageScreenshotHtml(c: CrawlSiteResult, startUrl: string): string {
+  const s = c.startPageScreenshot;
+  if (!s) return "";
+  const mode = s.fullPage ? "full page" : "viewport";
+  const baseDesc = `Headless Chromium · ${s.viewportWidth}×${s.viewportHeight} · ${mode} · capture ${formatDuration(s.durationMs)}`;
+  if (s.error && !s.fileName) {
+    return `<section class="report-section">
+    <h2>Start page screenshot</h2>
+    <p class="section-desc">${esc(baseDesc)}</p>
+    <p class="cell-err">Could not capture: ${esc(s.error)}</p>
+  </section>`;
+  }
+  if (!s.fileName) return "";
+  return `<section class="report-section">
+    <h2>Start page screenshot</h2>
+    <p class="section-desc">${esc(baseDesc)} · <a href="${esc(startUrl)}">${esc(startUrl)}</a></p>
+    <div class="screenshot-wrap">
+      <a href="${esc(s.fileName)}" target="_blank" rel="noopener noreferrer">
+        <img src="${esc(s.fileName)}" alt="Screenshot of the start page" class="screenshot-img" loading="lazy"/>
+      </a>
+    </div>
+    ${s.error ? `<p class="meta">Note: ${esc(s.error)}</p>` : ""}
+  </section>`;
+}
+
 /** Stable id for triage persistence (matches across HTML regenerations for same logical issue). */
 function issueKeyHash(parts: string[]): string {
   return createHash("sha256").update(parts.join("|"), "utf8").digest("base64url").slice(0, 24);
@@ -634,6 +714,15 @@ export function buildMasterRedirectHtml(masterHtmlFileName: string): string {
   <p>Opening <a href="${esc(base)}">combined health report</a>…</p>
 </body>
 </html>`;
+}
+
+/** Size column: flag empty 200 bodies (often bot/WAF or shell-only HTML). */
+function pageBodySizeCell(p: PageFetchRecord): string {
+  if (p.bodyBytes == null) return "—";
+  if (p.bodyBytes === 0 && p.ok) {
+    return `<span title="Empty body with HTTP 2xx — server may strip content for this User-Agent or return a shell only. Set QA_AGENT_USER_AGENT or inspect the URL in a browser.">0 B</span>`;
+  }
+  return formatBytes(p.bodyBytes);
 }
 
 function formatBytes(n: number): string {
@@ -751,6 +840,38 @@ function displayRedirectPath(p: PageFetchRecord): string {
 
 function redirectYesNo(p: PageFetchRecord): string {
   return p.redirected ? "Yes" : "No";
+}
+
+/** Truncated `<title>` with full text in tooltip. */
+function cellPageTitleHtml(p: PageFetchRecord): string {
+  const t = p.documentTitle?.trim();
+  if (!t) return "—";
+  const max = 80;
+  const show = t.length > max ? `${t.slice(0, max)}…` : t;
+  return `<span title="${esc(t)}">${esc(show)}</span>`;
+}
+
+function cellMetaDescLen(p: PageFetchRecord): string {
+  if (p.metaDescriptionLength === undefined) return "—";
+  return String(p.metaDescriptionLength);
+}
+
+function cellH1Count(p: PageFetchRecord): string {
+  if (p.h1Count === undefined) return "—";
+  return String(p.h1Count);
+}
+
+function cellDocumentLang(p: PageFetchRecord): string {
+  const l = p.documentLang?.trim();
+  return l ? esc(l) : "—";
+}
+
+function cellCanonicalLink(p: PageFetchRecord): string {
+  const c = p.canonicalUrl;
+  if (!c) return "—";
+  const max = 64;
+  const show = c.length > max ? `${c.slice(0, max)}…` : c;
+  return `<a href="${esc(c)}" title="${esc(c)}">${esc(show)}</a>`;
 }
 
 /** Human-readable outcome for the “Pages fetched” table. */
@@ -900,13 +1021,27 @@ const HEALTH_TABLE_FILTERS_SCRIPT = `<script>
 })();
 <\/script>`;
 
-/** Persist triage (Open / OK / Working / Resolved) per issue row; merges server JSON + localStorage. */
+/** Persist triage (Open / OK / Working / Resolved) per issue row; merges server JSON + localStorage; POST saves issue-overrides.json on the run folder. */
 const HEALTH_ISSUE_TRIAGE_SCRIPT = `<script>
 (function(){
   function runId(){ return document.body.getAttribute("data-run-id")||""; }
   function storageKey(){ return "qa-agent-issue-overrides-"+(runId()||"default"); }
   function loadLocal(){ try{ return JSON.parse(localStorage.getItem(storageKey())||"{}")||{}; }catch(e){ return {}; } }
   function saveLocal(o){ try{ localStorage.setItem(storageKey(), JSON.stringify(o)); }catch(e){} }
+  function banner(){
+    var el=document.getElementById("qa-agent-triage-banner");
+    if(!el){
+      el=document.createElement("p");
+      el.id="qa-agent-triage-banner";
+      el.setAttribute("role","status");
+      el.setAttribute("aria-live","polite");
+      el.style.cssText="margin:0 0 14px;font-size:0.85rem;color:#64748b;padding:10px 14px;border-radius:10px;border:1px solid rgba(0,0,0,0.08);background:rgba(0,0,0,0.02);";
+      var shell=document.querySelector(".report-shell");
+      if(shell) shell.insertBefore(el, shell.firstChild);
+      else document.body.insertBefore(el, document.body.firstChild);
+    }
+    return el;
+  }
   function applyRow(tr, sel, map){
     var k=tr.getAttribute("data-issue-key");
     if(!k)return;
@@ -930,14 +1065,31 @@ const HEALTH_ISSUE_TRIAGE_SCRIPT = `<script>
       return (j&&typeof j==="object"&&j.overrides&&typeof j.overrides==="object")?j.overrides:j;
     }catch(e){ return {}; }
   }
-  function postAll(map){
+  async function postAll(map){
     var rid=runId();
-    if(!rid)return;
+    if(!rid)return false;
     var p=window.location.protocol;
-    if(p!=="http:"&&p!=="https:")return;
+    if(p!=="http:"&&p!=="https:"){
+      banner().textContent="Open this report via the dashboard (http://127.0.0.1:…) to save triage to issue-overrides.json on disk.";
+      return false;
+    }
     try{
-      fetch("/api/issue-overrides",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({runId:rid,overrides:map})});
-    }catch(e){}
+      var res=await fetch("/api/issue-overrides",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({runId:rid,overrides:map})});
+      var txt=await res.text();
+      var data={};
+      try{ data=JSON.parse(txt);}catch(e){}
+      if(!res.ok)throw new Error((data&&data.message)||txt.slice(0,220)||res.statusText||"Save failed");
+      if(!data.ok)throw new Error(txt.slice(0,220));
+      if(data.overrides&&typeof data.overrides==="object")saveLocal(data.overrides);
+      else saveLocal(map);
+      banner().textContent="Triage saved to this run (issue-overrides.json). Reopen the report any time — status loads from that file.";
+      banner().style.color="#059669";
+      return true;
+    }catch(e){
+      banner().textContent="Could not save triage: "+(e&&e.message?e.message:String(e));
+      banner().style.color="#dc2626";
+      return false;
+    }
   }
   async function init(){
     var server=await loadServer();
@@ -948,7 +1100,7 @@ const HEALTH_ISSUE_TRIAGE_SCRIPT = `<script>
       applyRow(tr, sel, map);
     });
     document.querySelectorAll(".issue-triage-select").forEach(function(sel){
-      sel.addEventListener("change", function(){
+      sel.addEventListener("change", async function(){
         var tr=sel.closest("tr");
         var k=tr&&tr.getAttribute("data-issue-key");
         if(!k)return;
@@ -956,7 +1108,7 @@ const HEALTH_ISSUE_TRIAGE_SCRIPT = `<script>
         m[k]=sel.value;
         saveLocal(m);
         if(tr)tr.setAttribute("data-triage-status", sel.value);
-        postAll(m);
+        await postAll(m);
       });
     });
   }
@@ -1044,6 +1196,7 @@ function perfGaugeColor(score: number | undefined): string {
 function buildPsiCardHtml(ins: PageSpeedInsightRecord): string {
   if (ins.error) {
     return `<article class="psi-card psi-card-err">
+  <p class="meta" style="margin:0 0 8px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em">${esc(ins.strategy)}</p>
   <p class="psi-url"><a href="${esc(ins.url)}">${esc(ins.url)}</a></p>
   <p class="err">${esc(ins.error)} <span class="meta">(API ${ins.durationMs}ms)</span></p>
 </article>`;
@@ -1146,14 +1299,8 @@ export function buildSiteHealthHtml(
   const linkChecksSorted = [...(c.linkChecks ?? [])].sort((a, b) => b.durationMs - a.durationMs);
 
   const psiPages = c.pages
-    .filter((p) => p.insights)
-    .sort((a, b) => {
-      const key = (p: PageFetchRecord) => {
-        if (p.insights?.error) return 1000;
-        return p.insights?.scores?.performance ?? 999;
-      };
-      return key(a) - key(b);
-    });
+    .filter((p) => hasPageSpeedInsights(p))
+    .sort((a, b) => bestPerformanceScore(a) - bestPerformanceScore(b));
 
   const brokenRows =
     brokenSorted.length === 0
@@ -1178,7 +1325,10 @@ export function buildSiteHealthHtml(
     brokenSorted.length === 0 ? "" : buildTableFiltersHtml("health-table-broken", FILTER_STATUS_BROKEN, "HTTP");
 
   const psiMetaHtml = c.pageSpeedInsightsMeta
-    ? `<div class="stat"><span class="stat-label">PageSpeed API</span><span class="stat-value">${esc(c.pageSpeedInsightsMeta.strategy)} <small>· ${c.pageSpeedInsightsMeta.urlsAnalyzed} URLs · ${formatDuration(c.pageSpeedInsightsMeta.totalDurationMs)}</small></span></div>`
+    ? `<div class="stat"><span class="stat-label">PageSpeed API</span><span class="stat-value">${esc(psiStrategiesLabel(c.pageSpeedInsightsMeta))} <small>· ${c.pageSpeedInsightsMeta.urlsAnalyzed} URLs · ${formatDuration(c.pageSpeedInsightsMeta.totalDurationMs)}</small></span></div>`
+    : "";
+  const viewportMetaHtml = c.viewportMeta
+    ? `<div class="stat"><span class="stat-label">Viewport checks</span><span class="stat-value">Chromium <small>· ${c.viewportMeta.urlsChecked} URLs · ${formatDuration(c.viewportMeta.totalDurationMs)}</small></span></div>`
     : "";
 
   const aggStatsHtml =
@@ -1194,6 +1344,8 @@ export function buildSiteHealthHtml(
     <div class="stat"><span class="stat-label">Redirects</span><span class="stat-value">${agg.redirectedCount}<small> pages</small></span></div>
   </div>
   ${httpPillsHtml(agg)}`;
+
+  const startPageShotHtml = buildStartPageScreenshotHtml(c, report.startUrl);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1215,10 +1367,13 @@ export function buildSiteHealthHtml(
       <div class="stat"><span class="stat-label">URLs checked</span><span class="stat-value">${c.uniqueUrlsChecked}</span></div>
       <div class="stat"><span class="stat-label">Broken rows</span><span class="stat-value">${c.brokenLinks.length}</span></div>
       ${psiMetaHtml}
+      ${viewportMetaHtml}
     </div>
     ${aggStatsHtml}
     <p class="meta" style="margin:20px 0 0;">Run window: ${esc(report.startedAt)} → ${esc(report.finishedAt)}</p>
   </header>
+
+  ${startPageShotHtml}
 
   <section class="report-section">
     <h2>Broken internal links</h2>
@@ -1234,16 +1389,16 @@ export function buildSiteHealthHtml(
 
   <section class="report-section">
     <h2>Pages fetched</h2>
-    <p class="section-desc">Full page GET (headers + HTML body). <strong>Type</strong> is the response MIME; <strong>Size</strong> is UTF-8 bytes of the HTML body; <strong>Redirect</strong> shows when the final URL differed. Sorted slowest first.</p>
+    <p class="section-desc">Full page GET (headers + HTML body). <strong>Title</strong>, <strong>Meta</strong> (description length), <strong>H1</strong>, <strong>Lang</strong>, and <strong>Canonical</strong> are parsed from HTML when a body was read. <strong>Type</strong> is the response MIME; <strong>Size</strong> is UTF-8 bytes of the body; <strong>Redirect</strong> shows when the final URL differed. Sorted slowest first.</p>
     ${buildTableFiltersHtml("health-table-pages", FILTER_STATUS_PAGES)}
     <div class="table-wrap">
     <table class="data-table" id="health-table-pages">
-      <thead><tr><th>URL</th><th>HTTP</th><th class="num">Time (ms)</th><th>Type</th><th class="num">Size</th><th>Redirect</th><th>Result</th><th>Triage</th></tr></thead>
+      <thead><tr><th>URL</th><th>Title</th><th class="num">Meta</th><th class="num">H1</th><th>Lang</th><th>Canonical</th><th>HTTP</th><th class="num">Time (ms)</th><th>Type</th><th class="num">Size</th><th>Redirect</th><th>Result</th><th>Triage</th></tr></thead>
       <tbody>
         ${pagesSorted
           .map((p) => {
-            const ft = `${p.url} ${p.contentType ?? ""}`.toLowerCase();
-            const sizeCell = p.bodyBytes != null ? formatBytes(p.bodyBytes) : "—";
+            const ft = `${p.url} ${p.contentType ?? ""} ${p.documentTitle ?? ""}`.toLowerCase();
+            const sizeCell = pageBodySizeCell(p);
             const redir =
               p.redirected && p.finalUrl && p.finalUrl !== p.url
                 ? `<strong>${esc(redirectYesNo(p))}</strong><br/><span class="cell-mono">${esc(displayRedirectPath(p))}</span>`
@@ -1253,6 +1408,11 @@ export function buildSiteHealthHtml(
             const issueAttr = p.ok ? "" : ` data-issue-key="${esc(pageKey)}"`;
             return `<tr class="${p.ok ? "row-ok" : "row-err"}"${issueAttr} data-filter-text="${esc(ft)}" data-filter-ms="${String(p.durationMs)}" data-filter-result="${pageFetchFilterKey(p)}">
           <td><a href="${esc(p.url)}">${esc(p.url)}</a></td>
+          <td>${cellPageTitleHtml(p)}</td>
+          <td class="num">${esc(cellMetaDescLen(p))}</td>
+          <td class="num">${esc(cellH1Count(p))}</td>
+          <td>${cellDocumentLang(p)}</td>
+          <td>${cellCanonicalLink(p)}</td>
           <td>${p.status}</td>
           <td class="num">${p.durationMs}</td>
           <td><span title="${esc(p.contentType ?? "")}">${esc(shortMime(p.contentType))}</span></td>
@@ -1273,9 +1433,26 @@ export function buildSiteHealthHtml(
       ? ""
       : `<section class="report-section">
     <h2>PageSpeed Insights</h2>
-    <p class="section-desc">Lighthouse lab metrics (same engine as <a href="https://pagespeed.web.dev/" rel="noopener noreferrer">PageSpeed Insights</a>). Not field / CrUX data. Sorted by lowest performance score first.</p>
+    <p class="section-desc">Lighthouse lab metrics (same engine as <a href="https://pagespeed.web.dev/" rel="noopener noreferrer">PageSpeed Insights</a>). Not field / CrUX data. Sorted by lowest performance score first. Lab errors such as NO_FCP are common on some sites; retry later or use <code>--pagespeed-strategy mobile</code> / <code>desktop</code> alone.</p>
     <div class="psi-grid">
-      ${psiPages.map((p) => buildPsiCardHtml(p.insights as PageSpeedInsightRecord)).join("\n")}
+      ${psiPages
+        .map((p) => flattenInsights(p.insights).map((ins) => buildPsiCardHtml(ins)).join("\n"))
+        .join("\n")}
+    </div>
+  </section>`
+  }
+
+  ${
+    (c.viewportChecks?.length ?? 0) === 0
+      ? ""
+      : `<section class="report-section">
+    <h2>Mobile &amp; desktop viewport loads</h2>
+    <p class="section-desc">Headless Chromium: <strong>390×844</strong> (mobile) vs <strong>1920×1080</strong> (desktop). <strong>OK</strong> means HTTP 2xx after <code>domcontentloaded</code>. Console column counts <code>console.error</code> events.</p>
+    <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>URL</th><th class="num">Mobile ms</th><th>Mobile</th><th class="num">M cons.</th><th class="num">Desktop ms</th><th>Desktop</th><th class="num">D cons.</th></tr></thead>
+      <tbody>${buildViewportRowsHtml(c.viewportChecks ?? [])}</tbody>
+    </table>
     </div>
   </section>`
   }
@@ -1326,16 +1503,20 @@ export function buildMasterHealthHtml(
   reports: SiteHealthReport[],
   meta: { runId: string; urlsFile: string; generatedAt: string },
 ): string {
-  const brokenAll = reports.flatMap((r) =>
-    r.crawl.brokenLinks.map((b) => ({ ...b, siteHostname: r.hostname })),
+  const brokenAll = reports.flatMap((r, siteIdx) =>
+    r.crawl.brokenLinks.map((b) => ({ ...b, siteHostname: r.hostname, siteIndex: siteIdx })),
   );
-  brokenAll.sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0));
+  brokenAll.sort((a, b) => {
+    if (a.siteIndex !== b.siteIndex) return a.siteIndex - b.siteIndex;
+    return (b.durationMs ?? 0) - (a.durationMs ?? 0);
+  });
 
   const brokenRows =
     brokenAll.length === 0
       ? `<tr data-filter-skip="1"><td colspan="7"><div class="empty-state">No broken internal links across all sites.</div></td></tr>`
       : brokenAll
-          .map((b) => {
+          .map((row) => {
+            const { siteIndex: _si, ...b } = row;
             const ms = b.durationMs ?? 0;
             const ft = `${b.siteHostname} ${b.foundOn} ${b.target} ${b.error ?? ""}`.toLowerCase();
             const ikey = issueKeyHash([
@@ -1361,15 +1542,19 @@ export function buildMasterHealthHtml(
   const masterBrokenFilters =
     brokenAll.length === 0 ? "" : buildTableFiltersHtml("master-table-broken", FILTER_STATUS_BROKEN, "HTTP");
 
-  const pagesAll = reports.flatMap((r) =>
-    r.crawl.pages.map((p) => ({ ...p, siteHostname: r.hostname })),
+  const pagesAll = reports.flatMap((r, siteIdx) =>
+    r.crawl.pages.map((p) => ({ ...p, siteHostname: r.hostname, siteIndex: siteIdx })),
   );
-  pagesAll.sort((a, b) => b.durationMs - a.durationMs);
+  pagesAll.sort((a, b) => {
+    if (a.siteIndex !== b.siteIndex) return a.siteIndex - b.siteIndex;
+    return b.durationMs - a.durationMs;
+  });
 
   const pageRows = pagesAll
-    .map((p) => {
-      const ft = `${p.siteHostname} ${p.url} ${p.contentType ?? ""}`.toLowerCase();
-      const sizeCell = p.bodyBytes != null ? formatBytes(p.bodyBytes) : "—";
+    .map((row) => {
+      const { siteIndex: _siteIdx, ...p } = row;
+      const ft = `${p.siteHostname} ${p.url} ${p.contentType ?? ""} ${p.documentTitle ?? ""}`.toLowerCase();
+      const sizeCell = pageBodySizeCell(p);
       const redir =
         p.redirected && p.finalUrl && p.finalUrl !== p.url
           ? `<strong>${esc(redirectYesNo(p))}</strong><br/><span class="cell-mono">${esc(displayRedirectPath(p))}</span>`
@@ -1380,6 +1565,11 @@ export function buildMasterHealthHtml(
       return `<tr class="${p.ok ? "row-ok" : "row-err"}"${issueAttr} data-filter-text="${esc(ft)}" data-filter-ms="${String(p.durationMs)}" data-filter-result="${pageFetchFilterKey(p)}">
   <td>${esc(p.siteHostname)}</td>
   <td><a href="${esc(p.url)}">${esc(p.url)}</a></td>
+  <td>${cellPageTitleHtml(p)}</td>
+  <td class="num">${esc(cellMetaDescLen(p))}</td>
+  <td class="num">${esc(cellH1Count(p))}</td>
+  <td>${cellDocumentLang(p)}</td>
+  <td>${cellCanonicalLink(p)}</td>
   <td>${p.status}</td>
   <td class="num">${p.durationMs}</td>
   <td><span title="${esc(p.contentType ?? "")}">${esc(shortMime(p.contentType))}</span></td>
@@ -1391,24 +1581,28 @@ export function buildMasterHealthHtml(
     })
     .join("\n");
 
-  const linksAll = reports.flatMap((r) =>
-    (r.crawl.linkChecks ?? []).map((l) => ({ ...l, siteHostname: r.hostname })),
+  const linksAll = reports.flatMap((r, siteIdx) =>
+    (r.crawl.linkChecks ?? []).map((l) => ({ ...l, siteHostname: r.hostname, siteIndex: siteIdx })),
   );
-  linksAll.sort((a, b) => b.durationMs - a.durationMs);
+  linksAll.sort((a, b) => {
+    if (a.siteIndex !== b.siteIndex) return a.siteIndex - b.siteIndex;
+    return b.durationMs - a.durationMs;
+  });
 
   const linkChecksSection =
     linksAll.length === 0
       ? ""
       : `<section class="report-section">
     <h2>Internal link checks (not crawled as HTML)</h2>
-    <p class="section-desc">HEAD / tiny GET for URLs discovered but not fetched as full pages. Sorted slowest first.</p>
+    <p class="section-desc">HEAD / tiny GET for URLs discovered but not fetched as full pages. Order matches your URL list, then slowest first within each site.</p>
     ${buildTableFiltersHtml("master-table-links", FILTER_STATUS_LINKS)}
     <div class="table-wrap">
     <table class="data-table" id="master-table-links">
       <thead><tr><th>Site</th><th>Target</th><th>HTTP</th><th class="num">Time (ms)</th><th>Method</th><th>Result</th><th>Triage</th></tr></thead>
       <tbody>
         ${linksAll
-          .map((l) => {
+          .map((row) => {
+            const { siteIndex: _si, ...l } = row;
             const ft = `${l.siteHostname} ${l.target}`.toLowerCase();
             const linkKey = issueKeyHash(["link", l.siteHostname, l.target, l.method]);
             const triage = l.ok ? triageEmptyCell() : triageSelectCell(linkKey);
@@ -1430,11 +1624,20 @@ export function buildMasterHealthHtml(
   </section>`;
 
   const summaryRows = reports
-    .map((r) => {
+    .map((r, i) => {
       const failed = r.crawl.brokenLinks.length > 0 || r.crawl.pages.some((p) => !p.ok);
       const sa = computePageAggregateStats(r.crawl.pages);
+      const folder = healthSiteOutputDirName(i, r.startUrl);
+      const shot = r.crawl.startPageScreenshot;
+      const thumb =
+        shot?.fileName && !shot.error
+          ? `<a href="./${esc(folder)}/${esc(shot.fileName)}"><img class="master-thumb" src="./${esc(folder)}/${esc(shot.fileName)}" alt="" loading="lazy"/></a>`
+          : shot?.error
+            ? `<span class="cell-err" title="${esc(shot.error)}">—</span>`
+            : "—";
       return `<tr>
   <td>${esc(r.hostname)}</td>
+  <td style="vertical-align:middle;width:1%">${thumb}</td>
   <td><a href="${esc(r.startUrl)}">${esc(r.startUrl)}</a></td>
   <td class="num">${r.crawl.pagesVisited}</td>
   <td class="num">${r.crawl.brokenLinks.length}</td>
@@ -1452,20 +1655,16 @@ export function buildMasterHealthHtml(
 
   const psiSections = reports
     .map((r) => {
-      const psiPages = r.crawl.pages
-        .filter((p) => p.insights)
-        .sort((a, b) => {
-          const key = (p: PageFetchRecord) => {
-            if (p.insights?.error) return 1000;
-            return p.insights?.scores?.performance ?? 999;
-          };
-          return key(a) - key(b);
-        });
-      if (psiPages.length === 0) return "";
+      const psiPagesM = r.crawl.pages
+        .filter((p) => hasPageSpeedInsights(p))
+        .sort((a, b) => bestPerformanceScore(a) - bestPerformanceScore(b));
+      if (psiPagesM.length === 0) return "";
       return `<h2 class="master-site-heading">${esc(r.hostname)} — PageSpeed Insights (Lighthouse lab)</h2>
     <p class="section-desc">Per-site lab data; same cards as single-site reports.</p>
     <div class="psi-grid">
-      ${psiPages.map((p) => buildPsiCardHtml(p.insights as PageSpeedInsightRecord)).join("\n")}
+      ${psiPagesM
+        .map((p) => flattenInsights(p.insights).map((ins) => buildPsiCardHtml(ins)).join("\n"))
+        .join("\n")}
     </div>`;
     })
     .filter(Boolean)
@@ -1476,7 +1675,7 @@ export function buildMasterHealthHtml(
       ? ""
       : `<section class="report-section">
     <h2>PageSpeed Insights (all sites)</h2>
-    <p class="section-desc">Grouped by hostname. Lab metrics only.</p>
+    <p class="section-desc">Grouped by hostname. Lab metrics only. Failed runs (e.g. NO_FCP) reflect Google&rsquo;s Lighthouse environment, not your crawl.</p>
     ${psiSections}
   </section>`;
 
@@ -1508,7 +1707,7 @@ export function buildMasterHealthHtml(
     <p class="section-desc">Per-site crawl totals and status.</p>
     <div class="table-wrap">
     <table class="data-table">
-      <thead><tr><th>Site</th><th>Start URL</th><th class="num">Pages</th><th class="num">Broken</th><th class="num">Avg ms</th><th class="num">OK %</th><th class="num">HTML size</th><th>Status</th><th>Finished</th></tr></thead>
+      <thead><tr><th>Site</th><th>Start page</th><th>Start URL</th><th class="num">Pages</th><th class="num">Broken</th><th class="num">Avg ms</th><th class="num">OK %</th><th class="num">HTML size</th><th>Status</th><th>Finished</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table>
     </div>
@@ -1516,7 +1715,7 @@ export function buildMasterHealthHtml(
 
   <section class="report-section">
     <h2>Broken internal links (all sites)</h2>
-    <p class="section-desc">Sorted slowest first. <strong>Site</strong> is the hostname for that crawl line.</p>
+    <p class="section-desc">Rows follow your run&rsquo;s URL list order, then slowest first within each site. <strong>Site</strong> is the hostname for that crawl line. Triage choices are saved to <code>issue-overrides.json</code> when you use the dashboard (<code>http://</code>).</p>
     ${masterBrokenFilters}
     <div class="table-wrap">
     <table class="data-table" id="master-table-broken">
@@ -1528,11 +1727,11 @@ export function buildMasterHealthHtml(
 
   <section class="report-section">
     <h2>Pages fetched (all sites)</h2>
-    <p class="section-desc">Sorted slowest first. Search matches site, URL, and content type. Columns include MIME type, HTML size, and redirects.</p>
+    <p class="section-desc">Rows follow your run&rsquo;s URL list order, then slowest first within each site. Search matches site, URL, content type, and title. Columns include HTML signals (title, meta description length, H1 count, lang, canonical), MIME type, size, and redirects.</p>
     ${buildTableFiltersHtml("master-table-pages", FILTER_STATUS_PAGES)}
     <div class="table-wrap">
     <table class="data-table" id="master-table-pages">
-      <thead><tr><th>Site</th><th>URL</th><th>HTTP</th><th class="num">Time (ms)</th><th>Type</th><th class="num">Size</th><th>Redirect</th><th>Result</th><th>Triage</th></tr></thead>
+      <thead><tr><th>Site</th><th>URL</th><th>Title</th><th class="num">Meta</th><th class="num">H1</th><th>Lang</th><th>Canonical</th><th>HTTP</th><th class="num">Time (ms)</th><th>Type</th><th class="num">Size</th><th>Redirect</th><th>Result</th><th>Triage</th></tr></thead>
       <tbody>${pageRows}</tbody>
     </table>
     </div>

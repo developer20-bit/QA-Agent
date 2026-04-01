@@ -9,6 +9,15 @@ export interface BrokenLinkRecord {
   durationMs?: number;
 }
 
+/**
+ * When both mobile and desktop PageSpeed runs are enabled, stored per page.
+ * Legacy reports use a single `PageSpeedInsightRecord` on `insights` instead.
+ */
+export interface PageSpeedInsightsBundle {
+  mobile?: PageSpeedInsightRecord;
+  desktop?: PageSpeedInsightRecord;
+}
+
 /** Lighthouse lab scores/metrics from Google PageSpeed Insights API (optional per page). */
 export interface PageSpeedInsightRecord {
   url: string;
@@ -57,8 +66,41 @@ export interface PageFetchRecord {
   redirected?: boolean;
   /** Final URL after redirects (may differ from `url`). */
   finalUrl?: string;
+  /** Parsed from HTML `<title>` when a body was read (truncated in crawl). */
+  documentTitle?: string;
+  /** Character length of meta description (name=description or og:description); set when HTML was parsed. */
+  metaDescriptionLength?: number;
+  /** Count of `<h1>` elements when HTML was parsed. */
+  h1Count?: number;
+  /** `<html lang>` when present. */
+  documentLang?: string;
+  /** Absolute URL from `<link rel="canonical">` when present and resolvable. */
+  canonicalUrl?: string;
   /** Populated when health run uses --pagespeed and this URL was analyzed. */
-  insights?: PageSpeedInsightRecord;
+  insights?: PageSpeedInsightRecord | PageSpeedInsightsBundle;
+}
+
+/** Playwright-based load check for mobile vs desktop viewports (optional per run). */
+export interface ViewportCheckRecord {
+  url: string;
+  mobile: {
+    width: number;
+    height: number;
+    loadMs: number;
+    ok: boolean;
+    httpStatus?: number;
+    consoleErrorCount: number;
+    error?: string;
+  };
+  desktop: {
+    width: number;
+    height: number;
+    loadMs: number;
+    ok: boolean;
+    httpStatus?: number;
+    consoleErrorCount: number;
+    error?: string;
+  };
 }
 
 /** HEAD/GET verification for same-origin URLs discovered but not fetched as HTML in BFS. */
@@ -82,11 +124,33 @@ export interface CrawlSiteResult {
   linkChecks?: LinkCheckRecord[];
   /** Set when PageSpeed Insights was run for this crawl. */
   pageSpeedInsightsMeta?: {
-    strategy: "mobile" | "desktop";
+    strategies: ("mobile" | "desktop")[];
+    /** @deprecated Old reports used a single strategy string. */
+    strategy?: "mobile" | "desktop";
     totalDurationMs: number;
     urlsAnalyzed: number;
   };
+  /** Optional Chromium checks: same URLs, mobile vs desktop viewports. */
+  viewportChecks?: ViewportCheckRecord[];
+  viewportMeta?: {
+    totalDurationMs: number;
+    urlsChecked: number;
+  };
+  /** PNG of the start URL taken with headless Chromium (relative file name under the site output folder). */
+  startPageScreenshot?: StartPageScreenshotMeta;
   durationMs: number;
+}
+
+/** Screenshot of the crawl start URL (main page), written next to report HTML. */
+export interface StartPageScreenshotMeta {
+  /** Relative to the site folder, e.g. `start-page.png`. Omitted if capture failed. */
+  fileName?: string;
+  durationMs: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  /** When true, captured full scrollable page (larger file). */
+  fullPage: boolean;
+  error?: string;
 }
 
 export interface SiteHealthReport {

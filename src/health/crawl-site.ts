@@ -1,4 +1,5 @@
 import { load } from "cheerio";
+import type { CheerioAPI } from "cheerio";
 import pLimit from "p-limit";
 import type { BrokenLinkRecord, CrawlSiteResult, LinkCheckRecord, PageFetchRecord } from "./types.js";
 import { siteIdFromUrl } from "./load-urls.js";
@@ -12,7 +13,15 @@ function userAgent(): string {
   return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_UA;
 }
 
-const MAX_FETCH_ATTEMPTS = 3;
+const MAX_FETCH_ATTEMPTS = (() => {
+  const n = Number.parseInt(process.env.QA_AGENT_FETCH_MAX_ATTEMPTS ?? "3", 10);
+  return Number.isFinite(n) && n >= 1 && n <= 5 ? n : 3;
+})();
+
+const RETRY_BACKOFF_MS = (() => {
+  const n = Number.parseInt(process.env.QA_AGENT_FETCH_RETRY_BACKOFF_MS ?? "100", 10);
+  return Number.isFinite(n) && n >= 0 && n <= 5000 ? n : 100;
+})();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -82,6 +91,32 @@ function primaryMime(contentTypeHeader: string): string | undefined {
   return t || undefined;
 }
 
+/** Case-insensitive: treat as document we should read as text for crawling. */
+function contentTypeLooksLikeHtml(contentTypeHeader: string): boolean {
+  const ct = contentTypeHeader.toLowerCase();
+  return (
+    ct.includes("text/html") ||
+    ct.includes("application/xhtml") ||
+    ct.includes("application/xml") ||
+    ct.includes("text/xml") ||
+    ct.includes("xml")
+  );
+}
+
+function htmlDocumentFetchHeaders(): Record<string, string> {
+  const ua = userAgent();
+  return {
+    "User-Agent": ua,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+  };
+}
+
 async function fetchPage(
   url: string,
   timeoutMs: number,
@@ -97,26 +132,50 @@ async function fetchPage(
 }> {
   const started = Date.now();
   let lastError: string | undefined;
-  const ua = userAgent();
-  const htmlHeaders = {
-    "User-Agent": ua,
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-  };
+  const htmlHeaders = htmlDocumentFetchHeaders();
 
   for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(url, {
-        redirect: "follow",
-        headers: htmlHeaders,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      const ct = res.headers.get("content-type") ?? "";
-      const mime = primaryMime(ct);
-      const body =
-        ct.includes("text/html") || ct.includes("application/xhtml") || ct.includes("xml")
-          ? await res.text()
-          : null;
+      const doFetch = async (headers: Record<string, string>) => {
+        return await fetch(url, {
+          redirect: "follow",
+          headers,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      };
+
+      let res = await doFetch(htmlHeaders);
+      let ct = res.headers.get("content-type") ?? "";
+      let mime = primaryMime(ct);
+      let body: string | null = null;
+      if (contentTypeLooksLikeHtml(ct)) {
+        body = await res.text();
+      }
+
+      const statusOk = res.status >= 200 && res.status < 300;
+      if (
+        body !== null &&
+        body.length === 0 &&
+        statusOk &&
+        contentTypeLooksLikeHtml(ct)
+      ) {
+        const res2 = await doFetch({
+          ...htmlHeaders,
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        });
+        const ct2 = res2.headers.get("content-type") ?? "";
+        if (contentTypeLooksLikeHtml(ct2)) {
+          const body2 = await res2.text();
+          if (body2.length > 0) {
+            res = res2;
+            ct = ct2;
+            mime = primaryMime(ct2);
+            body = body2;
+          }
+        }
+      }
+
       const bodyBytes = body != null ? Buffer.byteLength(body, "utf8") : undefined;
       return {
         status: res.status,
@@ -131,7 +190,7 @@ async function fetchPage(
       const msg = e instanceof Error ? e.message : String(e);
       lastError = msg;
       if (shouldRetryFetch(attempt, msg)) {
-        await sleep(200 * (attempt + 1));
+        await sleep(RETRY_BACKOFF_MS * (attempt + 1));
         continue;
       }
       return { status: 0, body: null, durationMs: Date.now() - started, error: msg };
@@ -176,7 +235,7 @@ async function headOrGetStatus(
       const msg = e instanceof Error ? e.message : String(e);
       lastError = msg;
       if (shouldRetryFetch(attempt, msg)) {
-        await sleep(200 * (attempt + 1));
+        await sleep(RETRY_BACKOFF_MS * (attempt + 1));
         continue;
       }
       return { status: 0, durationMs: Date.now() - started, method: "HEAD", error: msg };
@@ -192,6 +251,37 @@ function canonicalHref(url: string): string {
   } catch {
     return url;
   }
+}
+
+const MAX_STORED_TITLE_LEN = 500;
+
+/**
+ * SEO / QA signals from HTML (same pass as link discovery).
+ */
+function extractHtmlDocumentSignals($: CheerioAPI, pageUrl: string): Pick<
+  PageFetchRecord,
+  "documentTitle" | "metaDescriptionLength" | "h1Count" | "documentLang" | "canonicalUrl"
+> {
+  const titleRaw = $("title").first().text().replace(/\s+/g, " ").trim();
+  const metaRaw =
+    $('meta[name="description"]').attr("content")?.trim() ??
+    $('meta[property="og:description"]').attr("content")?.trim() ??
+    "";
+  const h1Count = $("h1").length;
+  const canon = $('link[rel="canonical"]').attr("href")?.trim();
+  let canonicalUrl: string | undefined;
+  if (canon) {
+    const abs = normalizeHref(canon, pageUrl);
+    if (abs) canonicalUrl = abs;
+  }
+  const langRaw = ($("html").attr("lang") ?? "").trim();
+  return {
+    documentTitle: titleRaw ? titleRaw.slice(0, MAX_STORED_TITLE_LEN) : undefined,
+    metaDescriptionLength: metaRaw.length,
+    h1Count,
+    documentLang: langRaw || undefined,
+    canonicalUrl,
+  };
 }
 
 /** `<= 0` means no limit (use MAX_SAFE_INTEGER internally). */
@@ -237,6 +327,14 @@ export async function crawlSite(options: {
       options.requestTimeoutMs,
     );
     const ok = status >= 200 && status < 400;
+    let $: CheerioAPI | null = null;
+    let docSignals: Partial<
+      Pick<PageFetchRecord, "documentTitle" | "metaDescriptionLength" | "h1Count" | "documentLang" | "canonicalUrl">
+    > = {};
+    if (body) {
+      $ = load(body);
+      docSignals = extractHtmlDocumentSignals($, pageUrl);
+    }
     pages.push({
       url: pageUrl,
       status,
@@ -247,6 +345,7 @@ export async function crawlSite(options: {
       bodyBytes,
       redirected,
       finalUrl,
+      ...docSignals,
     });
 
     if (!ok && status !== 0) {
@@ -256,9 +355,8 @@ export async function crawlSite(options: {
       brokenLinks.push({ foundOn: "(crawl)", target: pageUrl, error, durationMs });
     }
 
-    if (!body || !ok) return;
+    if (!$ || !ok) return;
 
-    const $ = load(body);
     $("a[href]").each((_, el) => {
       const href = $(el).attr("href");
       if (!href) return;
@@ -329,11 +427,17 @@ export async function crawlSite(options: {
   const listedCanonical = canonicalHref(options.startUrl);
   const listedSeen = pages.some((p) => canonicalHref(p.url) === listedCanonical);
   if (!listedSeen) {
-    const { status, error, durationMs, contentType, bodyBytes, redirected, finalUrl } = await fetchPage(
+    const { status, body, error, durationMs, contentType, bodyBytes, redirected, finalUrl } = await fetchPage(
       listedCanonical,
       options.requestTimeoutMs,
     );
     const ok = status >= 200 && status < 400;
+    let listedDoc: Partial<
+      Pick<PageFetchRecord, "documentTitle" | "metaDescriptionLength" | "h1Count" | "documentLang" | "canonicalUrl">
+    > = {};
+    if (body) {
+      listedDoc = extractHtmlDocumentSignals(load(body), listedCanonical);
+    }
     visited.add(listedCanonical);
     pages.unshift({
       url: listedCanonical,
@@ -345,6 +449,7 @@ export async function crawlSite(options: {
       bodyBytes,
       redirected,
       finalUrl,
+      ...listedDoc,
     });
     if (!ok && status !== 0) {
       brokenLinks.push({ foundOn: "(listed URL)", target: listedCanonical, status, error, durationMs });

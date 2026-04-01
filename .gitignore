@@ -1,6 +1,7 @@
 # Dependencies & build
 node_modules/
 dist/
+web/dist/
 *.tsbuildinfo
 
 # Env and local config (never commit secrets or your URL lists)
