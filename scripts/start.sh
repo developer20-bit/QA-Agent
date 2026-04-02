@@ -53,6 +53,8 @@ else
   fi
 fi
 
-echo "==> Starting dashboard at http://127.0.0.1:3847/ (Ctrl+C to stop)"
+DASHBOARD_PORT="${QA_AGENT_PORT:-3847}"
+echo "==> Starting dashboard at http://127.0.0.1:${DASHBOARD_PORT}/ (Ctrl+C to stop)"
+echo "    Port: QA_AGENT_PORT in .env, or --port (default 3847). If EADDRINUSE: npm run dashboard:kill"
 echo "    Extra args are passed to: health --serve ..."
 exec npm run health -- --serve "$@"

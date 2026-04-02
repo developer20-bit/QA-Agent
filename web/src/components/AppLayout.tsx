@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 
 const navItem = ({ isActive }: { isActive: boolean }) => ({
@@ -111,18 +111,19 @@ export default function AppLayout() {
       </motion.aside>
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <main style={{ flex: 1, padding: "32px 36px 80px", maxWidth: 1120, width: "100%", margin: "0 auto" }}>
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={pathname}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <Outlet />
-            </motion.div>
-          </AnimatePresence>
+        <main style={{ flex: 1, padding: "32px 36px 80px", maxWidth: 1120, width: "100%", margin: "0 auto", minHeight: 0 }}>
+          {/*
+            Avoid AnimatePresence mode="wait" around <Outlet /> — it can leave the main pane blank (opacity stuck or exit never completing).
+            initial={false} skips the invisible first frame that sometimes never animates in on direct /run/:id loads.
+          */}
+          <motion.div
+            key={pathname}
+            initial={false}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Outlet />
+          </motion.div>
         </main>
       </div>
     </div>

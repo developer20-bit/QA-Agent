@@ -237,6 +237,51 @@ async function listHealthHistory(outRoot: string): Promise<{ days: HealthHistory
   return { days };
 }
 
+/**
+ * Legacy `run-meta.json` could point `masterHtmlHref` at `./master.html` (redirect stub). Resolve to
+ * `MASTER-all-sites-*.html` when present. `run-summary.html` is the real file for new runs — no resolution.
+ */
+async function resolveMasterHtmlIfRedirectStub(runDir: string, meta: HealthRunMeta): Promise<HealthRunMeta> {
+  const href = meta.masterHtmlHref?.trim() ?? "";
+  const norm = href.replace(/^\.\//, "").replace(/\\/g, "/");
+  if (norm === "run-summary.html" || norm.endsWith("/run-summary.html")) return meta;
+  if (norm !== "master.html" && !norm.endsWith("/master.html")) return meta;
+  let dirents;
+  try {
+    dirents = await readdir(runDir, { withFileTypes: true });
+  } catch {
+    return meta;
+  }
+  const masterFiles = dirents
+    .filter((e) => e.isFile() && e.name.startsWith("MASTER-all-sites-") && e.name.endsWith(".html"))
+    .map((e) => e.name)
+    .sort();
+  if (masterFiles.length === 0) return meta;
+  const pick = masterFiles[masterFiles.length - 1] ?? masterFiles[0];
+  return { ...meta, masterHtmlHref: `./${pick}` };
+}
+
+/** Load a single run’s `run-meta.json` (or legacy summary) — used by the SPA workspace so it does not depend on history list matching. */
+async function loadRunMetaById(outRoot: string, runId: string): Promise<HealthRunMeta | null> {
+  if (!isSafeRunIdSegment(runId)) return null;
+  const runDir = path.join(outRoot, runId);
+  if (!isPathInsideRoot(outRoot, runDir)) return null;
+  try {
+    const st = await stat(runDir);
+    if (!st.isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  const metaPath = path.join(runDir, "run-meta.json");
+  try {
+    const raw = await readFile(metaPath, "utf8");
+    const meta = JSON.parse(raw) as HealthRunMeta;
+    return await resolveMasterHtmlIfRedirectStub(runDir, meta);
+  } catch {
+    return await loadLegacyRunMeta(runDir, runId);
+  }
+}
+
 const BUFFER_CAP = 2500;
 
 function dashboardHtml(): string {
@@ -493,7 +538,7 @@ function dashboardHtml(): string {
   <header>
     <h1>Site health dashboard</h1>
     <p class="sub">Run <code>npm run health -- --serve</code> (no <code>--urls</code> required). Paste root URLs below to crawl, generate HTML/JSON reports, and download PDFs. Open <strong>Past runs</strong> for a list of job cards — click a card to expand links and per-site results.</p>
-    <p class="sub" style="margin-top:10px">Each finished run is served at <code>/reports/&lt;runId&gt;/index.html</code> (run index), with per-site folders and a <strong>Combined report</strong> link. Use the sticky bar inside those pages to jump between the run index, combined HTML, and this dashboard.</p>
+    <p class="sub" style="margin-top:10px">Each finished run is served at <code>/reports/&lt;runId&gt;/index.html</code> (run index), with per-site folders, a <strong>Combined report</strong> (full analytics), and a <strong>Stats summary</strong> page for compact PDFs. Use the sticky bar to move between the run index, reports, and this dashboard.</p>
   </header>
   <main>
     <div class="tabs" role="tablist">
@@ -1024,6 +1069,27 @@ export async function runHealthDashboard(options: {
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/api/run-meta") {
+        const runIdParam = url.searchParams.get("runId");
+        if (!runIdParam || !isSafeRunIdSegment(runIdParam)) {
+          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Bad runId");
+          return;
+        }
+        const meta = await loadRunMetaById(outRoot, runIdParam);
+        if (!meta) {
+          res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "Run not found" }));
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(JSON.stringify(meta));
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/api/gemini-summary") {
         const runId = url.searchParams.get("runId");
         if (!runId || !isSafeRunIdSegment(runId)) {
@@ -1123,11 +1189,13 @@ export async function runHealthDashboard(options: {
           return;
         }
         try {
-          const pdf = await renderHtmlFileToPdf(absHtml);
+          const pdf = await renderHtmlFileToPdf(absHtml, { runRoot });
           const base = path.basename(file, ".html").replace(/[^a-zA-Z0-9._-]+/g, "_");
+          const download =
+            url.searchParams.get("download") === "1" || url.searchParams.get("download") === "true";
           res.writeHead(200, {
             "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="health-${runId}-${base}.pdf"`,
+            "Content-Disposition": `${download ? "attachment" : "inline"}; filename="health-${runId}-${base}.pdf"`,
             "Cache-Control": "no-store",
           });
           res.end(pdf);
@@ -1135,7 +1203,10 @@ export async function runHealthDashboard(options: {
           const msg = e instanceof Error ? e.message : String(e);
           res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
           res.end(
-            `PDF generation failed: ${msg}\n\nIf Chromium is missing, run: npx playwright install chromium\n`,
+            `PDF generation failed: ${msg}\n\n` +
+              `If Chromium is missing, run: npx playwright install chromium\n` +
+              `Large reports are retried with a fresh browser and lighter print settings (several attempts). ` +
+              `Docker/Linux: QA_AGENT_PDF_NO_SANDBOX=1. If PDFs look wrong on Apple Silicon, try QA_AGENT_PDF_DISABLE_GPU=1.\n`,
           );
         }
         return;
@@ -1213,6 +1284,84 @@ export async function runHealthDashboard(options: {
         }
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ ok: true, overrides: cleaned, savedAt: new Date().toISOString() }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/site-status-overrides") {
+        let body: string;
+        try {
+          body = await readBody(req, 512_000);
+        } catch {
+          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Bad request");
+          return;
+        }
+        let payload: { runId?: unknown; sites?: unknown };
+        try {
+          payload = JSON.parse(body) as { runId?: unknown; sites?: unknown };
+        } catch {
+          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Invalid JSON");
+          return;
+        }
+        const runIdParam =
+          typeof payload.runId === "string" ? payload.runId : String(payload.runId ?? "");
+        if (!runIdParam || !isSafeRunIdSegment(runIdParam)) {
+          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Bad runId");
+          return;
+        }
+        const rawSites = payload.sites;
+        if (!rawSites || typeof rawSites !== "object" || Array.isArray(rawSites)) {
+          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("sites must be an object");
+          return;
+        }
+        const allowed = new Set(["open", "ok", "working", "resolved"]);
+        const cleanedSites: Record<string, { status: string; editedAt: string }> = {};
+        const now = new Date().toISOString();
+        for (const [k, v] of Object.entries(rawSites as Record<string, unknown>)) {
+          if (typeof k !== "string" || k.length > 256 || k.includes("..") || k.includes("/") || k.includes("\\")) continue;
+          if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+          const st = (v as { status?: unknown }).status;
+          if (typeof st !== "string" || !allowed.has(st)) continue;
+          cleanedSites[k] = { status: st, editedAt: now };
+        }
+        const runRoot = path.join(outRoot, runIdParam);
+        if (!isPathInsideRoot(outRoot, runRoot)) {
+          res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Forbidden");
+          return;
+        }
+        const outPath = path.join(runRoot, "site-status-overrides.json");
+        if (!isPathInsideRoot(runRoot, outPath)) {
+          res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Forbidden");
+          return;
+        }
+        try {
+          await mkdir(runRoot, { recursive: true });
+          await writeFile(
+            outPath,
+            JSON.stringify(
+              {
+                runId: runIdParam,
+                savedAt: now,
+                sites: cleanedSites,
+              },
+              null,
+              2,
+            ),
+            "utf8",
+          );
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end(msg);
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: true, sites: cleanedSites, savedAt: now }));
         return;
       }
 
@@ -1370,9 +1519,24 @@ export async function runHealthDashboard(options: {
   });
 
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
+    const onError = (err: unknown) => {
+      server.off("error", onError);
+      const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+      if (code === "EADDRINUSE") {
+        reject(
+          new Error(
+            `Port ${options.port} is already in use (another qa-agent dashboard still running?).\n` +
+              `  • Stop it: focus the other terminal and press Ctrl+C, or run: npm run dashboard:kill\n` +
+              `  • Or use another port: QA_AGENT_PORT=3848 npm start   or   npm run health -- --serve --port 3848`,
+          ),
+        );
+        return;
+      }
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+    server.once("error", onError);
     server.listen(options.port, "127.0.0.1", () => {
-      server.off("error", reject);
+      server.off("error", onError);
       resolve();
     });
   });

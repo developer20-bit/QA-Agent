@@ -179,16 +179,58 @@ const HEALTH_REPORT_CSS = `
       padding: 26px 28px 28px;
       margin-bottom: 22px;
     }
-    .report-section h2 {
-      margin: 0 0 8px;
+    .report-section__details { margin: 0; }
+    .report-section__summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 0 0 12px;
+      margin: 0 0 4px;
+      border-bottom: 1px solid var(--border);
+      user-select: none;
+    }
+    .report-section__summary::-webkit-details-marker { display: none; }
+    .report-section__summary::marker { content: ""; }
+    .report-section__chev {
+      flex-shrink: 0;
+      width: 0.5rem;
+      height: 0.5rem;
+      margin-top: 0.35rem;
+      border-right: 2px solid var(--text-muted);
+      border-bottom: 2px solid var(--text-muted);
+      transform: rotate(45deg);
+      transition: transform 0.18s ease;
+    }
+    .report-section__details[open] .report-section__chev {
+      transform: rotate(225deg);
+      margin-top: 0.2rem;
+    }
+    .report-section__summary h2 {
+      margin: 0;
+      flex: 1;
+      min-width: 0;
       font-size: 1.25rem;
       font-weight: 600;
       letter-spacing: -0.02em;
       color: var(--text);
-      padding-bottom: 12px;
+      padding-bottom: 0;
+      border-bottom: none;
+      width: auto;
+    }
+    .report-section__body { padding-top: 4px; }
+    .report-section h2.master-site-heading {
+      margin: 1.25rem 0 8px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      padding-bottom: 8px;
       border-bottom: 1px solid var(--border);
       width: 100%;
     }
+    .report-section h2.master-site-heading:first-child { margin-top: 0; }
     .section-desc {
       margin: 12px 0 18px;
       font-size: 0.9375rem;
@@ -485,6 +527,128 @@ const HEALTH_REPORT_CSS = `
     }
     .report-nav__dash { display: none; }
     .report-nav--http .report-nav__dash { display: inline; }
+    .report-nav__pdf-row { display: none; }
+    .report-nav--http .report-nav__pdf-row { display: block; }
+    .report-nav__inner--pdf {
+      border-top: 1px solid var(--border);
+      background: rgba(0, 113, 227, 0.05);
+      justify-content: flex-start;
+      gap: 12px 20px;
+      flex-wrap: wrap;
+      padding-top: 10px;
+      padding-bottom: 10px;
+    }
+    .report-nav__pdf {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #fff;
+      background: var(--accent);
+      text-decoration: none;
+      padding: 8px 18px;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+    .report-nav__pdf:hover { filter: brightness(1.06); }
+    .report-nav__pdf-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      max-width: 42rem;
+      line-height: 1.35;
+    }
+
+    /*
+     * Chromium print-to-PDF: use emulateMedia({ media: "print" }) in html-to-pdf.ts so these rules apply.
+     * Fixes clipped tables (overflow-x), wasted margins, and unreadable row overlap.
+     */
+    @media print {
+      body {
+        background: #fff !important;
+        color: var(--text) !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .report-nav,
+      .idx-nav {
+        display: none !important;
+      }
+      .report-shell {
+        max-width: none !important;
+        width: 100% !important;
+        padding: 0 !important;
+        margin: 0 auto !important;
+      }
+      .report-header {
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .report-section {
+        box-shadow: none !important;
+        break-inside: auto;
+        page-break-inside: auto;
+      }
+      .table-filters {
+        display: none !important;
+      }
+      .table-wrap {
+        overflow: visible !important;
+        max-width: none !important;
+        border: 1px solid #d2d2d7;
+      }
+      table.data-table {
+        width: 100%;
+        font-size: 9.25px;
+        border-collapse: collapse;
+      }
+      .data-table thead th {
+        white-space: normal !important;
+        word-wrap: break-word;
+        padding: 8px 7px !important;
+        font-size: 7.5px !important;
+        line-height: 1.25 !important;
+      }
+      .data-table tbody td {
+        padding: 7px 7px !important;
+        line-height: 1.4 !important;
+        vertical-align: top !important;
+        word-break: break-word;
+        overflow: visible !important;
+        hyphens: auto;
+      }
+      td.num,
+      th.num {
+        white-space: nowrap !important;
+      }
+      .stat-grid {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .stat {
+        break-inside: avoid;
+      }
+      .psi-card {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        box-shadow: none !important;
+      }
+      .psi-grid {
+        gap: 16px;
+      }
+      .screenshot-wrap {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .screenshot-img {
+        max-width: 100% !important;
+        height: auto !important;
+      }
+      .issue-triage-select {
+        max-width: 100%;
+        font-size: 8px;
+      }
+    }
 `;
 
 const HEALTH_REPORT_HEAD = `
@@ -615,29 +779,45 @@ function esc(s: string): string {
     .replaceAll('"', "&quot;");
 }
 
+/** Collapsible body (default open). PDF pipeline forces all sections open before print. */
+function wrapReportSection(title: string, bodyHtml: string): string {
+  const t = esc(title);
+  return `<section class="report-section">
+  <details class="report-section__details" open>
+    <summary class="report-section__summary">
+      <span class="report-section__chev" aria-hidden="true"></span>
+      <h2>${t}</h2>
+    </summary>
+    <div class="report-section__body">
+${bodyHtml}
+    </div>
+  </details>
+</section>`;
+}
+
 function buildStartPageScreenshotHtml(c: CrawlSiteResult, startUrl: string): string {
   const s = c.startPageScreenshot;
   if (!s) return "";
   const mode = s.fullPage ? "full page" : "viewport";
   const baseDesc = `Headless Chromium · ${s.viewportWidth}×${s.viewportHeight} · ${mode} · capture ${formatDuration(s.durationMs)}`;
   if (s.error && !s.fileName) {
-    return `<section class="report-section">
-    <h2>Start page screenshot</h2>
-    <p class="section-desc">${esc(baseDesc)}</p>
-    <p class="cell-err">Could not capture: ${esc(s.error)}</p>
-  </section>`;
+    return wrapReportSection(
+      "Start page screenshot",
+      `<p class="section-desc">${esc(baseDesc)}</p>
+    <p class="cell-err">Could not capture: ${esc(s.error)}</p>`,
+    );
   }
   if (!s.fileName) return "";
-  return `<section class="report-section">
-    <h2>Start page screenshot</h2>
-    <p class="section-desc">${esc(baseDesc)} · <a href="${esc(startUrl)}">${esc(startUrl)}</a></p>
+  return wrapReportSection(
+    "Start page screenshot",
+    `<p class="section-desc">${esc(baseDesc)} · <a href="${esc(startUrl)}">${esc(startUrl)}</a></p>
     <div class="screenshot-wrap">
       <a href="${esc(s.fileName)}" target="_blank" rel="noopener noreferrer">
         <img src="${esc(s.fileName)}" alt="Screenshot of the start page" class="screenshot-img" loading="lazy"/>
       </a>
     </div>
-    ${s.error ? `<p class="meta">Note: ${esc(s.error)}</p>` : ""}
-  </section>`;
+    ${s.error ? `<p class="meta">Note: ${esc(s.error)}</p>` : ""}`,
+  );
 }
 
 /** Stable id for triage persistence (matches across HTML regenerations for same logical issue). */
@@ -662,20 +842,62 @@ function triageEmptyCell(): string {
   return `<td class="issue-triage-cell issue-triage-cell--na">—</td>`;
 }
 
-/** Sticky nav shared by per-site and combined health HTML (stable links via master.html). */
-function buildHealthNavHtml(opts: { variant: "site" | "master" }): string {
+/** Sticky nav: per-site, full combined MASTER HTML, or compact run-summary. */
+function buildHealthNavHtml(opts: {
+  variant: "site" | "master";
+  runId?: string;
+  /** Path relative to run root for PDF (usually `run-summary.html` for a compact export). */
+  pdfSourceRel?: string;
+  /** When `variant` is master: which page is current (`combined` = full all-sites report). */
+  masterPage?: "combined" | "summary";
+}): string {
   const indexHref = opts.variant === "site" ? "../index.html" : "./index.html";
-  const combinedHref = opts.variant === "site" ? "../master.html" : "./master.html";
+  const masterStableHref = opts.variant === "site" ? "../master.html" : "./master.html";
+  const statsHref = opts.variant === "site" ? "../run-summary.html" : "./run-summary.html";
+  const rid = opts.runId?.trim();
+  const pdfRel = opts.pdfSourceRel?.trim();
+  const pdfHref =
+    rid && pdfRel
+      ? `/api/pdf?runId=${encodeURIComponent(rid)}&file=${encodeURIComponent(pdfRel)}&download=1`
+      : "";
+  const pdfRow =
+    pdfHref === ""
+      ? ""
+      : `<div class="report-nav__pdf-row">
+  <div class="report-nav__inner report-nav__inner--pdf">
+    <a class="report-nav__pdf" href="${esc(pdfHref)}">Download PDF</a>
+    <span class="report-nav__pdf-hint">PDF of this page’s HTML (same content as in the browser). Uses the latest saved triage when opened from the dashboard.</span>
+  </div>
+</div>`;
   if (opts.variant === "site") {
     return `<nav class="report-nav" aria-label="Health run navigation">
   <div class="report-nav__inner">
     <span class="report-nav__brand">QA-Agent</span>
     <a class="report-nav__link" href="${indexHref}">Run index</a>
     <span class="report-nav__sep" aria-hidden="true">·</span>
-    <a class="report-nav__link" href="${combinedHref}">Combined report</a>
+    <a class="report-nav__link" href="${masterStableHref}">Combined report</a>
+    <span class="report-nav__sep" aria-hidden="true">·</span>
+    <a class="report-nav__link" href="${statsHref}">Stats summary</a>
     <span class="report-nav__sep" aria-hidden="true">·</span>
     <a class="report-nav__link report-nav__dash" href="/">Live dashboard</a>
   </div>
+${pdfRow}
+</nav>`;
+  }
+  const mp = opts.masterPage ?? "combined";
+  if (mp === "summary") {
+    return `<nav class="report-nav" aria-label="Health run navigation">
+  <div class="report-nav__inner">
+    <span class="report-nav__brand">QA-Agent</span>
+    <a class="report-nav__link" href="${indexHref}">Run index</a>
+    <span class="report-nav__sep" aria-hidden="true">·</span>
+    <a class="report-nav__link" href="${masterStableHref}">Combined report</a>
+    <span class="report-nav__sep" aria-hidden="true">·</span>
+    <span class="report-nav__here" aria-current="page">Stats summary</span>
+    <span class="report-nav__sep" aria-hidden="true">·</span>
+    <a class="report-nav__link report-nav__dash" href="/">Live dashboard</a>
+  </div>
+${pdfRow}
 </nav>`;
   }
   return `<nav class="report-nav" aria-label="Health run navigation">
@@ -685,8 +907,11 @@ function buildHealthNavHtml(opts: { variant: "site" | "master" }): string {
     <span class="report-nav__sep" aria-hidden="true">·</span>
     <span class="report-nav__here" aria-current="page">Combined report</span>
     <span class="report-nav__sep" aria-hidden="true">·</span>
+    <a class="report-nav__link" href="${statsHref}">Stats summary</a>
+    <span class="report-nav__sep" aria-hidden="true">·</span>
     <a class="report-nav__link report-nav__dash" href="/">Live dashboard</a>
   </div>
+${pdfRow}
 </nav>`;
 }
 
@@ -712,6 +937,147 @@ export function buildMasterRedirectHtml(masterHtmlFileName: string): string {
 </head>
 <body style="font-family:system-ui,-apple-system,sans-serif;padding:2rem;background:#f5f5f7;color:#444">
   <p>Opening <a href="${esc(base)}">combined health report</a>…</p>
+</body>
+</html>`;
+}
+
+/** Lightweight print-oriented CSS: one screen page per site in PDF (A4). */
+const RUN_SUMMARY_CSS = `
+    :root {
+      --text: #1d1d1f;
+      --muted: #86868b;
+      --border: rgba(0, 0, 0, 0.1);
+      --accent: #0071e3;
+      --ok: #34c759;
+      --err: #ff3b30;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--text);
+      background: #f5f5f7;
+    }
+    .report-shell { max-width: 720px; margin: 0 auto; padding: 24px 20px 40px; }
+    .report-header {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px 26px;
+      margin-bottom: 20px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .report-kicker { margin: 0 0 8px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .report-header h1 { margin: 0 0 12px; font-size: 1.35rem; font-weight: 600; letter-spacing: -0.02em; }
+    .report-header .meta { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .site-summary-sheet {
+      background: #fff;
+      border-radius: 16px;
+      padding: 22px 26px 26px;
+      margin-bottom: 18px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .site-summary-sheet h2 {
+      margin: 0 0 14px;
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      word-break: break-all;
+    }
+    .summary-dl { margin: 0; display: grid; grid-template-columns: 9.5rem 1fr; gap: 8px 14px; font-size: 0.9rem; }
+    .summary-dl dt { color: var(--muted); font-weight: 600; margin: 0; }
+    .summary-dl dd { margin: 0; word-break: break-word; }
+    .summary-dl dd a { color: var(--accent); text-decoration: none; font-weight: 500; }
+    .summary-dl dd a:hover { text-decoration: underline; }
+    .summary-crawl-status { font-weight: 600; }
+    .cell-ok { color: var(--ok); }
+    .cell-err { color: var(--err); }
+    .report-footer { margin-top: 28px; text-align: center; font-size: 0.78rem; color: var(--muted); }
+    @media print {
+      body { background: #fff; }
+      .report-shell { max-width: none; padding: 0; }
+      .report-header { box-shadow: none; page-break-after: avoid; }
+      .site-summary-sheet {
+        page-break-after: always;
+        page-break-inside: avoid;
+        box-shadow: none;
+        margin-bottom: 0;
+        border-radius: 0;
+        border: none;
+        border-bottom: 1px solid var(--border);
+        padding: 12mm 14mm 14mm;
+      }
+      .site-summary-sheet:last-of-type { page-break-after: auto; }
+      .report-nav { position: static; }
+    }
+    @page { size: A4; margin: 12mm; }
+`;
+
+/**
+ * Single HTML used for run-level PDF: one printed page per site with crawl stats only (no crawl tables).
+ * Full detail remains in each folder’s `report.html`.
+ */
+export function buildRunSummaryHtml(
+  reports: SiteHealthReport[],
+  meta: { runId: string; urlsFile: string; generatedAt: string; startedAt?: string },
+): string {
+  const sheets = reports
+    .map((r) => {
+      const failed = r.crawl.brokenLinks.length > 0 || r.crawl.pages.some((p) => !p.ok);
+      const st = failed ? "Issues" : "OK";
+      const stClass = failed ? "cell-err" : "cell-ok";
+      return `<article class="site-summary-sheet" data-site-hostname="${esc(r.hostname)}">
+  <h2>${esc(r.hostname)}</h2>
+  <dl class="summary-dl">
+    <dt>Start URL</dt>
+    <dd><a href="${esc(r.startUrl)}">${esc(r.startUrl)}</a></dd>
+    <dt>Pages crawled</dt>
+    <dd>${r.crawl.pagesVisited}</dd>
+    <dt>Broken links</dt>
+    <dd>${r.crawl.brokenLinks.length}</dd>
+    <dt>Crawl duration</dt>
+    <dd>${esc(formatDuration(r.crawl.durationMs))} <span style="color:var(--muted);font-weight:400">(${r.crawl.durationMs} ms)</span></dd>
+    <dt>Crawl status</dt>
+    <dd class="summary-crawl-status ${stClass}">${st}</dd>
+    <dt>Finished</dt>
+    <dd>${esc(r.finishedAt)}</dd>
+  </dl>
+</article>`;
+    })
+    .join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  ${HEALTH_REPORT_HEAD}
+  <title>Run summary — ${esc(meta.runId)}</title>
+  <style>${RUN_SUMMARY_CSS}</style>
+</head>
+<body data-run-summary="1">
+  ${buildHealthNavHtml({
+    variant: "master",
+    runId: meta.runId,
+    pdfSourceRel: "run-summary.html",
+    masterPage: "summary",
+  })}
+  <div class="report-shell">
+  <header class="report-header">
+    <p class="report-kicker">QA-Agent · Run summary</p>
+    <h1>All sites — run summary</h1>
+    <p class="meta"><strong>Run ID</strong> ${esc(meta.runId)}</p>
+    <p class="meta"><strong>Generated</strong> ${esc(meta.generatedAt)}</p>
+    ${meta.startedAt ? `<p class="meta"><strong>Started</strong> ${esc(meta.startedAt)}</p>` : ""}
+    <p class="meta"><strong>URLs</strong> ${esc(meta.urlsFile)}</p>
+    <p class="meta"><strong>Sites</strong> ${reports.length}</p>
+  </header>
+  ${sheets}
+  <footer class="report-footer">One page per site in PDF · Open <strong>Combined report</strong> for full analytics · Per-site detail in each folder’s <code>report.html</code></footer>
+  </div>
+  ${HEALTH_NAV_SCRIPT}
 </body>
 </html>`;
 }
@@ -1288,7 +1654,7 @@ function httpPillsHtml(agg: PageAggregateStats): string {
 
 export function buildSiteHealthHtml(
   report: SiteHealthReport,
-  options?: { runId?: string },
+  options?: { runId?: string; pdfSourceRel?: string },
 ): string {
   const runIdAttr = options?.runId ?? "";
   const c = report.crawl;
@@ -1354,8 +1720,12 @@ export function buildSiteHealthHtml(
   <title>Health — ${esc(c.hostname)}</title>
   <style>${HEALTH_REPORT_CSS}</style>
 </head>
-<body data-run-id="${esc(runIdAttr)}">
-  ${buildHealthNavHtml({ variant: "site" })}
+<body data-run-id="${esc(runIdAttr)}" data-site-hostname="${esc(c.hostname)}">
+  ${buildHealthNavHtml({
+    variant: "site",
+    runId: options?.runId,
+    pdfSourceRel: options?.pdfSourceRel,
+  })}
   <div class="report-shell">
   <header class="report-header">
     <p class="report-kicker">QA-Agent · Site health</p>
@@ -1375,21 +1745,21 @@ export function buildSiteHealthHtml(
 
   ${startPageShotHtml}
 
-  <section class="report-section">
-    <h2>Broken internal links</h2>
-    <p class="section-desc">Wall-clock time for the HTTP call that reported the issue. Sorted slowest first.</p>
+  ${wrapReportSection(
+    "Broken internal links",
+    `<p class="section-desc">Wall-clock time for the HTTP call that reported the issue. Sorted slowest first.</p>
     ${brokenFilters}
     <div class="table-wrap">
     <table class="data-table" id="health-table-broken">
       <thead><tr><th>Found on</th><th>Target</th><th>HTTP</th><th class="num">Time (ms)</th><th>Detail</th><th>Triage</th></tr></thead>
       <tbody>${brokenRows}</tbody>
     </table>
-    </div>
-  </section>
+    </div>`,
+  )}
 
-  <section class="report-section">
-    <h2>Pages fetched</h2>
-    <p class="section-desc">Full page GET (headers + HTML body). <strong>Title</strong>, <strong>Meta</strong> (description length), <strong>H1</strong>, <strong>Lang</strong>, and <strong>Canonical</strong> are parsed from HTML when a body was read. <strong>Type</strong> is the response MIME; <strong>Size</strong> is UTF-8 bytes of the body; <strong>Redirect</strong> shows when the final URL differed. Sorted slowest first.</p>
+  ${wrapReportSection(
+    "Pages fetched",
+    `<p class="section-desc">Full page GET (headers + HTML body). <strong>Title</strong>, <strong>Meta</strong> (description length), <strong>H1</strong>, <strong>Lang</strong>, and <strong>Canonical</strong> are parsed from HTML when a body was read. <strong>Type</strong> is the response MIME; <strong>Size</strong> is UTF-8 bytes of the body; <strong>Redirect</strong> shows when the final URL differed. Sorted slowest first.</p>
     ${buildTableFiltersHtml("health-table-pages", FILTER_STATUS_PAGES)}
     <div class="table-wrap">
     <table class="data-table" id="health-table-pages">
@@ -1425,44 +1795,44 @@ export function buildSiteHealthHtml(
           .join("\n")}
       </tbody>
     </table>
-    </div>
-  </section>
+    </div>`,
+  )}
 
   ${
     psiPages.length === 0
       ? ""
-      : `<section class="report-section">
-    <h2>PageSpeed Insights</h2>
-    <p class="section-desc">Lighthouse lab metrics (same engine as <a href="https://pagespeed.web.dev/" rel="noopener noreferrer">PageSpeed Insights</a>). Not field / CrUX data. Sorted by lowest performance score first. Lab errors such as NO_FCP are common on some sites; retry later or use <code>--pagespeed-strategy mobile</code> / <code>desktop</code> alone.</p>
+      : wrapReportSection(
+          "PageSpeed Insights",
+          `<p class="section-desc">Lighthouse lab metrics (same engine as <a href="https://pagespeed.web.dev/" rel="noopener noreferrer">PageSpeed Insights</a>). Not field / CrUX data. Sorted by lowest performance score first. Lab errors such as NO_FCP are common on some sites; retry later or use <code>--pagespeed-strategy mobile</code> / <code>desktop</code> alone.</p>
     <div class="psi-grid">
       ${psiPages
         .map((p) => flattenInsights(p.insights).map((ins) => buildPsiCardHtml(ins)).join("\n"))
         .join("\n")}
-    </div>
-  </section>`
+    </div>`,
+        )
   }
 
   ${
     (c.viewportChecks?.length ?? 0) === 0
       ? ""
-      : `<section class="report-section">
-    <h2>Mobile &amp; desktop viewport loads</h2>
-    <p class="section-desc">Headless Chromium: <strong>390×844</strong> (mobile) vs <strong>1920×1080</strong> (desktop). <strong>OK</strong> means HTTP 2xx after <code>domcontentloaded</code>. Console column counts <code>console.error</code> events.</p>
+      : wrapReportSection(
+          "Mobile & desktop viewport loads",
+          `<p class="section-desc">Headless Chromium: <strong>390×844</strong> (mobile) vs <strong>1920×1080</strong> (desktop). <strong>OK</strong> means HTTP 2xx after <code>domcontentloaded</code>. Console column counts <code>console.error</code> events.</p>
     <div class="table-wrap">
     <table class="data-table">
       <thead><tr><th>URL</th><th class="num">Mobile ms</th><th>Mobile</th><th class="num">M cons.</th><th class="num">Desktop ms</th><th>Desktop</th><th class="num">D cons.</th></tr></thead>
       <tbody>${buildViewportRowsHtml(c.viewportChecks ?? [])}</tbody>
     </table>
-    </div>
-  </section>`
+    </div>`,
+        )
   }
 
   ${
     linkChecksSorted.length === 0
       ? ""
-      : `<section class="report-section">
-    <h2>Internal link checks</h2>
-    <p class="section-desc">Same-origin URLs not fetched as full pages in BFS; verified with HEAD or tiny GET. Sorted slowest first.</p>
+      : wrapReportSection(
+          "Internal link checks",
+          `<p class="section-desc">Same-origin URLs not fetched as full pages in BFS; verified with HEAD or tiny GET. Sorted slowest first.</p>
     ${buildTableFiltersHtml("health-table-links", FILTER_STATUS_LINKS)}
     <div class="table-wrap">
     <table class="data-table" id="health-table-links">
@@ -1485,8 +1855,8 @@ export function buildSiteHealthHtml(
           .join("\n")}
       </tbody>
     </table>
-    </div>
-  </section>`
+    </div>`,
+        )
   }
 
   <footer class="report-footer">Generated by QA-Agent · Site health crawl</footer>
@@ -1501,7 +1871,13 @@ export function buildSiteHealthHtml(
 /** Combined HTML: all sites, all URLs, with Site column where relevant. */
 export function buildMasterHealthHtml(
   reports: SiteHealthReport[],
-  meta: { runId: string; urlsFile: string; generatedAt: string },
+  meta: {
+    runId: string;
+    urlsFile: string;
+    generatedAt: string;
+    /** Relative path under run folder for PDF (e.g. timestamped combined HTML filename). */
+    pdfSourceRel?: string;
+  },
 ): string {
   const brokenAll = reports.flatMap((r, siteIdx) =>
     r.crawl.brokenLinks.map((b) => ({ ...b, siteHostname: r.hostname, siteIndex: siteIdx })),
@@ -1592,9 +1968,9 @@ export function buildMasterHealthHtml(
   const linkChecksSection =
     linksAll.length === 0
       ? ""
-      : `<section class="report-section">
-    <h2>Internal link checks (not crawled as HTML)</h2>
-    <p class="section-desc">HEAD / tiny GET for URLs discovered but not fetched as full pages. Order matches your URL list, then slowest first within each site.</p>
+      : wrapReportSection(
+          "Internal link checks (not crawled as HTML)",
+          `<p class="section-desc">HEAD / tiny GET for URLs discovered but not fetched as full pages. Order matches your URL list, then slowest first within each site.</p>
     ${buildTableFiltersHtml("master-table-links", FILTER_STATUS_LINKS)}
     <div class="table-wrap">
     <table class="data-table" id="master-table-links">
@@ -1620,8 +1996,8 @@ export function buildMasterHealthHtml(
           .join("\n")}
       </tbody>
     </table>
-    </div>
-  </section>`;
+    </div>`,
+        );
 
   const summaryRows = reports
     .map((r, i) => {
@@ -1635,7 +2011,7 @@ export function buildMasterHealthHtml(
           : shot?.error
             ? `<span class="cell-err" title="${esc(shot.error)}">—</span>`
             : "—";
-      return `<tr>
+      return `<tr data-site-hostname="${esc(r.hostname)}">
   <td>${esc(r.hostname)}</td>
   <td style="vertical-align:middle;width:1%">${thumb}</td>
   <td><a href="${esc(r.startUrl)}">${esc(r.startUrl)}</a></td>
@@ -1673,11 +2049,11 @@ export function buildMasterHealthHtml(
   const psiBlock =
     psiSections.length === 0
       ? ""
-      : `<section class="report-section">
-    <h2>PageSpeed Insights (all sites)</h2>
-    <p class="section-desc">Grouped by hostname. Lab metrics only. Failed runs (e.g. NO_FCP) reflect Google&rsquo;s Lighthouse environment, not your crawl.</p>
-    ${psiSections}
-  </section>`;
+      : wrapReportSection(
+          "PageSpeed Insights (all sites)",
+          `<p class="section-desc">Grouped by hostname. Lab metrics only. Failed runs (e.g. NO_FCP) reflect Google&rsquo;s Lighthouse environment, not your crawl.</p>
+    ${psiSections}`,
+        );
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1687,7 +2063,12 @@ export function buildMasterHealthHtml(
   <style>${HEALTH_REPORT_CSS}</style>
 </head>
 <body data-run-id="${esc(meta.runId)}">
-  ${buildHealthNavHtml({ variant: "master" })}
+  ${buildHealthNavHtml({
+    variant: "master",
+    runId: meta.runId,
+    pdfSourceRel: meta.pdfSourceRel,
+    masterPage: "combined",
+  })}
   <div class="report-shell">
   <header class="report-header">
     <p class="report-kicker">QA-Agent · Combined run</p>
@@ -1702,40 +2083,40 @@ export function buildMasterHealthHtml(
     <p class="meta" style="margin:18px 0 0;"><strong>Generated:</strong> ${esc(meta.generatedAt)} · <strong>URLs file:</strong> ${esc(meta.urlsFile)}</p>
   </header>
 
-  <section class="report-section">
-    <h2>Summary by site</h2>
-    <p class="section-desc">Per-site crawl totals and status.</p>
+  ${wrapReportSection(
+    "Summary by site",
+    `<p class="section-desc">Per-site crawl totals and status.</p>
     <div class="table-wrap">
     <table class="data-table">
       <thead><tr><th>Site</th><th>Start page</th><th>Start URL</th><th class="num">Pages</th><th class="num">Broken</th><th class="num">Avg ms</th><th class="num">OK %</th><th class="num">HTML size</th><th>Status</th><th>Finished</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table>
-    </div>
-  </section>
+    </div>`,
+  )}
 
-  <section class="report-section">
-    <h2>Broken internal links (all sites)</h2>
-    <p class="section-desc">Rows follow your run&rsquo;s URL list order, then slowest first within each site. <strong>Site</strong> is the hostname for that crawl line. Triage choices are saved to <code>issue-overrides.json</code> when you use the dashboard (<code>http://</code>).</p>
+  ${wrapReportSection(
+    "Broken internal links (all sites)",
+    `<p class="section-desc">Rows follow your run&rsquo;s URL list order, then slowest first within each site. <strong>Site</strong> is the hostname for that crawl line. Triage choices are saved to <code>issue-overrides.json</code> when you use the dashboard (<code>http://</code>).</p>
     ${masterBrokenFilters}
     <div class="table-wrap">
     <table class="data-table" id="master-table-broken">
       <thead><tr><th>Site</th><th>Found on</th><th>Target</th><th>HTTP</th><th class="num">Time (ms)</th><th>Detail</th><th>Triage</th></tr></thead>
       <tbody>${brokenRows}</tbody>
     </table>
-    </div>
-  </section>
+    </div>`,
+  )}
 
-  <section class="report-section">
-    <h2>Pages fetched (all sites)</h2>
-    <p class="section-desc">Rows follow your run&rsquo;s URL list order, then slowest first within each site. Search matches site, URL, content type, and title. Columns include HTML signals (title, meta description length, H1 count, lang, canonical), MIME type, size, and redirects.</p>
+  ${wrapReportSection(
+    "Pages fetched (all sites)",
+    `<p class="section-desc">Rows follow your run&rsquo;s URL list order, then slowest first within each site. Search matches site, URL, content type, and title. Columns include HTML signals (title, meta description length, H1 count, lang, canonical), MIME type, size, and redirects.</p>
     ${buildTableFiltersHtml("master-table-pages", FILTER_STATUS_PAGES)}
     <div class="table-wrap">
     <table class="data-table" id="master-table-pages">
       <thead><tr><th>Site</th><th>URL</th><th>Title</th><th class="num">Meta</th><th class="num">H1</th><th>Lang</th><th>Canonical</th><th>HTTP</th><th class="num">Time (ms)</th><th>Type</th><th class="num">Size</th><th>Redirect</th><th>Result</th><th>Triage</th></tr></thead>
       <tbody>${pageRows}</tbody>
     </table>
-    </div>
-  </section>
+    </div>`,
+  )}
 
   ${linkChecksSection}
 
@@ -1759,7 +2140,13 @@ export async function writeSiteHealthReports(options: {
   runId?: string;
 }): Promise<{ htmlPath: string; jsonPath: string; canonicalHtmlPath: string; canonicalJsonPath: string }> {
   await mkdir(options.outDir, { recursive: true });
-  const html = buildSiteHealthHtml(options.report, { runId: options.runId });
+  const siteFolder = path.basename(options.outDir);
+  const pdfRel = `${siteFolder.replace(/\\/g, "/")}/report.html`;
+  const html = buildSiteHealthHtml(options.report, {
+    runId: options.runId,
+    /** PDF matches this folder’s `report.html` (what you see on screen). */
+    pdfSourceRel: options.runId ? pdfRel : undefined,
+  });
   const json = JSON.stringify(options.report, null, 2);
   const canonicalHtmlPath = path.join(options.outDir, `${options.fileBaseName}.html`);
   const canonicalJsonPath = path.join(options.outDir, `${options.fileBaseName}.json`);
@@ -1786,7 +2173,14 @@ export async function writeMasterHealthReports(options: {
     generatedAt: options.meta.generatedAt,
     sites: options.reports,
   };
-  await writeFile(htmlPath, buildMasterHealthHtml(options.reports, options.meta), "utf8");
+  await writeFile(
+    htmlPath,
+    buildMasterHealthHtml(options.reports, {
+      ...options.meta,
+      pdfSourceRel: `${options.fileBaseName}.html`,
+    }),
+    "utf8",
+  );
   await writeFile(jsonPath, JSON.stringify(payload, null, 2), "utf8");
   return { htmlPath, jsonPath };
 }
@@ -1822,6 +2216,7 @@ export function buildHealthIndexHtml(options: {
   <span class="idx-nav__brand">QA-Agent</span>
   <span class="idx-nav__here" aria-current="page">Run index</span>
   <a class="idx-nav__link" href="./master.html">Combined report</a>
+  <a class="idx-nav__link" href="./run-summary.html">Stats summary</a>
   <a class="idx-nav__link idx-nav__dash" href="/">Live dashboard</a>
 </nav>
 <div class="idx-wrap">
@@ -1832,10 +2227,12 @@ export function buildHealthIndexHtml(options: {
     <p class="idx-meta"><strong>Generated</strong> ${esc(options.generatedAt)}</p>
     <p class="idx-meta"><strong>URLs file</strong> ${esc(options.urlsFile)}</p>
     <div class="idx-combined">
-      <strong>Combined (all sites):</strong>
-      <a href="./master.html">Combined HTML</a>
+      <strong>All sites:</strong>
+      <a href="./master.html">Combined report</a>
       <span class="idx-meta"> (${esc(path.basename(options.masterHtmlPath))})</span>
-      · <a href="${esc(options.masterJsonPath)}">JSON</a>
+      · <a href="./run-summary.html">Stats summary</a> (compact PDF)
+      · <a href="${esc(options.masterJsonPath)}">Combined JSON</a>
+      · <a href="./run-meta.json">Run metadata (JSON)</a>
     </div>
   </div>
   <div class="idx-table-wrap">
@@ -1844,7 +2241,7 @@ export function buildHealthIndexHtml(options: {
       <tbody>${rows}</tbody>
     </table>
   </div>
-  <p class="idx-foot">Each per-site folder includes <code>report.html</code> (and a timestamped copy). <strong>Combined HTML</strong> uses <code>master.html</code> to jump to the versioned combined file. Use the top bar to open the live dashboard when you started the tool with <code>--serve</code>.</p>
+  <p class="idx-foot">Each per-site folder has full crawl <code>report.html</code>. <strong>Combined report</strong> aggregates every site (screenshots, PageSpeed, tables). <strong>Stats summary</strong> is a short PDF-friendly page (one printed page per site). Use the top bar when the dashboard is served with <code>--serve</code>.</p>
 </div>
 ${HEALTH_NAV_SCRIPT}
 </body></html>`;

@@ -73,6 +73,15 @@ function sameOrigin(a: string, b: string): boolean {
   }
 }
 
+/**
+ * Cloudflare wraps mailto in same-origin URLs like `/cdn-cgi/l/email-protection#…`.
+ * They are not meant for server-side GET/HEAD and routinely fail automated checks.
+ */
+function isCloudflareEmailProtectionUrl(u: URL): boolean {
+  const p = u.pathname.replace(/\\/g, "/").toLowerCase();
+  return p.startsWith("/cdn-cgi/l/email-protection");
+}
+
 function normalizeHref(href: string, pageUrl: string): string | null {
   const trimmed = href.trim();
   if (!trimmed || trimmed.startsWith("#") || trimmed.toLowerCase().startsWith("javascript:")) {
@@ -80,7 +89,9 @@ function normalizeHref(href: string, pageUrl: string): string | null {
   }
   if (/^(mailto:|tel:)/i.test(trimmed)) return null;
   try {
-    return new URL(trimmed, pageUrl).href;
+    const u = new URL(trimmed, pageUrl);
+    if (isCloudflareEmailProtectionUrl(u)) return null;
+    return u.href;
   } catch {
     return null;
   }

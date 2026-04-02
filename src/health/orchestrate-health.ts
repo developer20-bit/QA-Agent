@@ -16,6 +16,7 @@ import { masterReportBaseName, perSiteReportBaseName } from "./report-names.js";
 import {
   buildHealthIndexHtml,
   buildMasterRedirectHtml,
+  buildRunSummaryHtml,
   writeMasterHealthReports,
   writeSiteHealthReports,
 } from "./report-site.js";
@@ -47,7 +48,10 @@ export interface HealthRunMeta {
     durationMs: number;
     reportHtmlHref: string;
   }[];
+  /** Full combined HTML (MASTER-all-sites-*.html): screenshots, PageSpeed, all tables. */
   masterHtmlHref: string;
+  /** Compact stats-only HTML for small run-level PDFs (`run-summary.html`). */
+  runSummaryHtmlHref?: string;
   indexHtmlHref: string;
   /** Relative path to Markdown AI summary when generated. */
   geminiSummaryHref?: string;
@@ -254,12 +258,13 @@ export async function orchestrateHealthCheck(options: {
 
   const runFinishedAt = new Date().toISOString();
   const runWallDurationMs = Math.max(0, Date.now() - runStartWallMs);
+  const cleanReports = results.map((r) => {
+    const { failed: _f, ...rep } = r;
+    return rep;
+  });
   const masterBase = masterReportBaseName(runFinishedAt);
   await writeMasterHealthReports({
-    reports: results.map((r) => {
-      const { failed: _f, ...rep } = r;
-      return rep;
-    }),
+    reports: cleanReports,
     runDir,
     fileBaseName: masterBase,
     meta: {
@@ -272,6 +277,17 @@ export async function orchestrateHealthCheck(options: {
   await writeFile(
     path.join(runDir, "master.html"),
     buildMasterRedirectHtml(`${masterBase}.html`),
+    "utf8",
+  );
+
+  await writeFile(
+    path.join(runDir, "run-summary.html"),
+    buildRunSummaryHtml(cleanReports, {
+      runId: rid,
+      urlsFile: urlsSource === "file" && resolvedUrlsFile ? resolvedUrlsFile : "(inline)",
+      generatedAt: runFinishedAt,
+      startedAt: runStartedAt,
+    }),
     "utf8",
   );
 
@@ -344,7 +360,8 @@ export async function orchestrateHealthCheck(options: {
       durationMs: r.crawl.durationMs,
       reportHtmlHref: `${healthSiteOutputDirName(i, r.startUrl)}/report.html`,
     })),
-    masterHtmlHref: "./master.html",
+    masterHtmlHref: `./${masterBase}.html`,
+    runSummaryHtmlHref: "./run-summary.html",
     indexHtmlHref: "./index.html",
     geminiSummaryHref,
     aiSummary,

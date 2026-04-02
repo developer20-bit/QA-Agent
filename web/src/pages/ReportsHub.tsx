@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchHistory, pdfUrl, reportIndexUrl, type HealthRunMeta } from "../api";
+import { fetchHistory, type HealthRunMeta } from "../api";
 import { formatDeviceDateTime, formatDurationMs } from "../lib/time";
 
 export default function ReportsHub() {
@@ -33,8 +33,8 @@ export default function ReportsHub() {
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
         <h1 style={{ fontSize: "1.85rem", fontWeight: 700, letterSpacing: "-0.04em", margin: "0 0 10px" }}>Reports</h1>
         <p style={{ color: "var(--muted)", maxWidth: 720, lineHeight: 1.55, margin: 0, fontSize: "0.98rem" }}>
-          Open HTML run indexes and PDFs served from your artifacts folder. All paths are relative to each run under{" "}
-          <code>/reports/&lt;runId&gt;/</code>.
+          Open a run’s <strong style={{ color: "var(--text)" }}>workspace</strong> to review HTML reports, adjust site status, then{" "}
+          <strong style={{ color: "var(--text)" }}>download the final combined PDF</strong> when you’re done. PDF export is not available from this list — only from the workspace.
         </p>
       </motion.div>
 
@@ -121,18 +121,24 @@ export default function ReportsHub() {
                   )}
                 </div>
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                <a href={reportIndexUrl(run.runId)} target="_blank" rel="noreferrer">
-                  HTML index
-                </a>
-                <a href={`/reports/${encodeURIComponent(run.runId)}/master.html`} target="_blank" rel="noreferrer">
-                  Combined
-                </a>
-                <a href={pdfUrl(run.runId, "index.html")} target="_blank" rel="noreferrer">
-                  PDF
-                </a>
-                <Link to={`/run/${encodeURIComponent(run.runId)}`}>Details</Link>
-              </div>
+              <Link
+                to={`/run/${encodeURIComponent(run.runId)}`}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "10px 20px",
+                  borderRadius: 999,
+                  fontWeight: 600,
+                  fontSize: "0.9rem",
+                  textDecoration: "none",
+                  color: "#061018",
+                  background: "linear-gradient(120deg, var(--accent), var(--accent2))",
+                  boxShadow: "0 8px 24px rgba(34, 211, 238, 0.2)",
+                  flexShrink: 0,
+                }}
+              >
+                Open workspace
+              </Link>
             </motion.li>
           ))}
         </motion.ul>

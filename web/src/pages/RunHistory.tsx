@@ -46,8 +46,8 @@ export default function RunHistory() {
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <h1 style={{ fontSize: "1.85rem", fontWeight: 700, letterSpacing: "-0.04em", margin: "0 0 10px" }}>Run history</h1>
         <p style={{ color: "var(--muted)", maxWidth: 720, lineHeight: 1.55, margin: 0, fontSize: "0.98rem" }}>
-          Every completed run is a row with start/end times, wall duration, and per-site stats. Use the chevron to open reports,
-          PDFs, and AI details.
+          Every completed run is a row with start/end times, wall duration, and per-site stats. Use the chevron for HTML report links,
+          PDF downloads, and the full workspace.
         </p>
       </motion.div>
 

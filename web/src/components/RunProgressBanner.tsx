@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { useElapsedMs } from "../hooks/useElapsedMs";
 import { formatDeviceDateTime, formatDurationMs } from "../lib/time";
 
@@ -203,6 +204,19 @@ export default function RunProgressBanner({ state }: Props) {
                         ) : null}
                       </p>
                     )}
+                    <p style={{ margin: "12px 0 0" }}>
+                      <Link
+                        to={`/run/${encodeURIComponent(state.runId)}`}
+                        style={{
+                          fontWeight: 600,
+                          color: "var(--accent2)",
+                          textDecoration: "none",
+                          borderBottom: "1px solid rgba(34, 211, 238, 0.35)",
+                        }}
+                      >
+                        Open run workspace (HTML reports + PDF download)
+                      </Link>
+                    </p>
                   </div>
                 )}
                 {state.kind === "error" && (

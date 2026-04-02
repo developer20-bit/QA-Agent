@@ -20,6 +20,8 @@ const DEFAULT_PAGESPEED_CONCURRENCY = String(envInt("QA_AGENT_PAGESPEED_CONCURRE
 /** Max wait (ms) for each PageSpeed API HTTP response; env QA_AGENT_PAGESPEED_TIMEOUT_MS */
 const DEFAULT_PAGESPEED_TIMEOUT_MS = String(envInt("QA_AGENT_PAGESPEED_TIMEOUT_MS", 120_000, 10_000, 600_000));
 const DEFAULT_VIEWPORT_CONCURRENCY = String(envInt("QA_AGENT_VIEWPORT_CONCURRENCY", 2, 1, 32));
+/** Default HTTP port for `health --serve` (override with `--port` or env `QA_AGENT_PORT`). */
+const DEFAULT_SERVE_PORT = process.env.QA_AGENT_PORT?.trim() || "3847";
 import { loadSitesConfig } from "./config/load.js";
 import { orchestrateRun } from "./orchestrate.js";
 import { runHealthDashboard } from "./health/health-dashboard-server.js";
@@ -76,7 +78,11 @@ program
     "Start a live dashboard (HTTP + SSE) on localhost while the run executes; open /reports/… in the same origin",
     false,
   )
-  .option("--port <n>", "Port for --serve (default 3847)", "3847")
+  .option(
+    "--port <n>",
+    `Port for --serve (default ${DEFAULT_SERVE_PORT}; env QA_AGENT_PORT)`,
+    DEFAULT_SERVE_PORT,
+  )
   .option("--no-browser", "With --serve, do not open a browser tab", false)
   .option(
     "--pagespeed",
@@ -267,7 +273,7 @@ program
 
       if (runId) {
         console.log(`\nHealth run ${runId} complete.`);
-        console.log(`Index: ${runDir}/index.html (per-site + combined MASTER-all-sites-… reports)`);
+        console.log(`Index: ${runDir}/index.html (per-site + MASTER combined + run-summary)`);
         console.log(`Summary: ${runDir}/summary.txt`);
       } else if (opts.serve) {
         console.log(`\nDashboard running — paste URLs in the UI to start crawls and reports.`);
