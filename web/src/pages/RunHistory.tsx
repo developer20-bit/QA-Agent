@@ -51,18 +51,20 @@ export default function RunHistory() {
         </p>
       </motion.div>
 
-      {err ? (
-        <p style={{ color: "var(--bad)", marginTop: 24 }}>{err}</p>
-      ) : null}
+      {err ? <div className="qa-alert qa-alert--error" style={{ marginTop: 20 }}>{err}</div> : null}
 
       <h2 style={{ fontSize: "0.875rem", fontWeight: 600, margin: "24px 0 14px", color: "var(--muted)" }}>
         Activity · {totalRuns} run{totalRuns === 1 ? "" : "s"}
       </h2>
 
       {loading ? (
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
+        <div className="qa-empty" style={{ marginTop: 8 }}>
+          Loading run history…
+        </div>
       ) : days.length === 0 ? (
-        <p style={{ color: "var(--muted)" }}>No runs yet. Start one from <strong>Dashboard</strong>.</p>
+        <div className="qa-empty" style={{ marginTop: 8 }}>
+          No runs yet. Start a crawl from the <strong>Dashboard</strong>, or finish a CLI run that writes to the same artifacts folder.
+        </div>
       ) : (
         days.map((day) => (
           <div key={day.date} style={{ marginBottom: 36 }}>

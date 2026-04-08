@@ -97,8 +97,8 @@ export default function RunDetail() {
 
   return (
     <div>
-      <Link to="/history" style={{ fontSize: "0.8125rem", fontWeight: 500 }}>
-        ← Run history
+      <Link to="/history" style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--muted)" }}>
+        ← Back to run history
       </Link>
       <motion.p
         initial={{ opacity: 0, y: 6 }}
@@ -111,17 +111,17 @@ export default function RunDetail() {
       <motion.h1
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        className="qa-page-title"
-        style={{ fontSize: "1.25rem", wordBreak: "break-all" }}
+        className="qa-run-id"
+        style={{ fontSize: "1.125rem", marginTop: 4, marginBottom: 0, lineHeight: 1.35 }}
       >
         {title}
       </motion.h1>
-      {loading ? <p style={{ color: "var(--muted)", marginTop: 16 }}>Loading run…</p> : null}
-      {err ? (
-        <p style={{ color: "var(--bad)", marginTop: 16, maxWidth: 560, lineHeight: 1.5 }}>
-          {err}
+      {loading ? (
+        <p className="qa-footnote" style={{ marginTop: 20 }}>
+          Loading run metadata…
         </p>
       ) : null}
+      {err ? <div className="qa-alert qa-alert--error" style={{ marginTop: 16, maxWidth: 560 }}>{err}</div> : null}
       {err ? (
         <p style={{ marginTop: 12, fontSize: "0.9rem" }}>
           <Link to="/reports" style={{ color: "var(--accent2)" }}>
@@ -146,7 +146,9 @@ export default function RunDetail() {
             transition={{ delay: 0.03 }}
             style={{ marginTop: 24, padding: 20 }}
           >
-            <h2 style={{ margin: "0 0 10px", fontSize: "1rem", fontWeight: 600 }}>Run index</h2>
+            <h2 className="qa-panel-title" style={{ margin: "0 0 10px" }}>
+              Run index
+            </h2>
             <p style={{ margin: "0 0 14px", color: "var(--muted)", fontSize: "0.9rem", lineHeight: 1.5 }}>
               Table of contents with links into each site folder (static HTML index).
             </p>
@@ -176,7 +178,9 @@ export default function RunDetail() {
                 }}
               >
                 <div style={{ minWidth: 0, flex: "1 1 240px" }}>
-                  <h2 style={{ margin: "0 0 6px", fontSize: "1.0625rem", fontWeight: 600 }}>Combined report</h2>
+                  <h2 className="qa-panel-title" style={{ margin: "0 0 6px", fontSize: "1.0625rem" }}>
+                    Combined report
+                  </h2>
                   <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.9rem", lineHeight: 1.5 }}>
                     Full all-sites view: PC, tablet, and phone start-page screenshots, PageSpeed scores, crawl tables, and triage — same as the legacy combined MASTER report. The preview below reflects saved triage when you export.{" "}
                     <strong style={{ color: "var(--text)" }}>Download PDF</strong> exports this same combined page (not the separate stats-only summary).
@@ -250,7 +254,9 @@ export default function RunDetail() {
                 fontSize: "0.9375rem",
               }}
             >
-              <h2 style={{ marginTop: 0, fontSize: "1.1rem" }}>AI summary</h2>
+              <h2 className="qa-panel-title" style={{ marginTop: 0, fontSize: "1.0625rem" }}>
+                AI summary
+              </h2>
               <p style={{ margin: "0 0 12px", color: "var(--muted)", fontSize: "0.85rem" }}>
                 Saved when the run was started with Gemini enabled — bullet-style snapshot for a quick read.
               </p>
@@ -268,7 +274,9 @@ export default function RunDetail() {
             animate={{ opacity: 1, y: 0 }}
             style={{ marginTop: 24, padding: 20 }}
           >
-            <h2 style={{ marginTop: 0, marginBottom: 8, fontSize: "1.1rem" }}>Ask about this run</h2>
+            <h2 className="qa-panel-title" style={{ marginTop: 0, marginBottom: 8, fontSize: "1.0625rem" }}>
+              Ask about this run
+            </h2>
             <p style={{ margin: "0 0 14px", color: "var(--muted)", fontSize: "0.88rem", lineHeight: 1.5 }}>
               Short answers from Gemini using this run’s crawl data (same JSON as the combined report). Needs{" "}
               <code style={{ fontSize: "0.82em" }}>GEMINI_API_KEY</code> or{" "}

@@ -24,32 +24,18 @@ export default function JobCard({ run, defaultOpen, titleNavigatesToRun = true }
 
   const headInner = (
     <div style={{ minWidth: 0 }}>
-      {titleNavigatesToRun ? (
-        <div style={{ fontWeight: 600, fontSize: "0.95rem", letterSpacing: "-0.02em" }}>{run.runId}</div>
-      ) : null}
-      <div
-        style={{
-          marginTop: titleNavigatesToRun ? 10 : 0,
-          padding: "10px 12px",
-          borderRadius: "var(--radius-sm)",
-          background: "var(--glass2)",
-          border: "1px solid var(--border)",
-          fontSize: "0.75rem",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          color: "var(--muted)",
-          lineHeight: 1.6,
-        }}
-      >
+      {titleNavigatesToRun ? <div className="qa-run-id">{run.runId}</div> : null}
+      <div className="qa-meta-block" style={{ marginTop: titleNavigatesToRun ? 10 : 0 }}>
         <div>
-          <span style={{ color: "var(--muted)", fontWeight: 600, marginRight: 8 }}>START</span>
+          <span className="qa-meta-block__k">START</span>
           {run.startedAt ? formatDeviceDateTime(run.startedAt) : "—"}
         </div>
         <div>
-          <span style={{ color: "var(--muted)", fontWeight: 600, marginRight: 8 }}>END</span>
+          <span className="qa-meta-block__k">END</span>
           {formatDeviceDateTime(run.generatedAt)}
         </div>
         <div>
-          <span style={{ color: "var(--muted)", fontWeight: 600, marginRight: 8 }}>WALL</span>
+          <span className="qa-meta-block__k">WALL</span>
           <span style={{ color: "var(--ok)", fontWeight: 600 }}>{wall ?? "—"}</span>
           {run.totalSites ? (
             <span style={{ marginLeft: 10 }}>
@@ -134,23 +120,13 @@ export default function JobCard({ run, defaultOpen, titleNavigatesToRun = true }
         {titleNavigatesToRun ? (
           <button
             type="button"
+            className="qa-icon-button"
             onClick={() => setOpen(!open)}
             aria-expanded={open}
             aria-label={open ? "Collapse run details" : "Expand run details"}
-            style={{
-              flexShrink: 0,
-              width: 48,
-              padding: "18px 12px",
-              border: "none",
-              background: "transparent",
-              color: "var(--muted)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "center",
-            }}
+            style={{ alignSelf: "stretch", alignItems: "center", marginRight: 4 }}
           >
-            <motion.span animate={{ rotate: open ? 180 : 0 }} style={{ fontSize: "1.1rem" }}>
+            <motion.span animate={{ rotate: open ? 180 : 0 }} style={{ fontSize: "1.125rem", lineHeight: 1 }}>
               ▾
             </motion.span>
           </button>
@@ -171,8 +147,8 @@ export default function JobCard({ run, defaultOpen, titleNavigatesToRun = true }
                   <Link to={`/run/${encodeURIComponent(run.runId)}`} className="qa-btn-primary" style={{ display: "inline-flex" }}>
                     Open workspace
                   </Link>
-                  <p style={{ margin: "10px 0 0", fontSize: "0.8rem", color: "var(--muted)", lineHeight: 1.45 }}>
-                    Review reports, set site status, then download the final PDF from the workspace — not here.
+                  <p className="qa-footnote" style={{ margin: "10px 0 0" }}>
+                    Open the workspace for reports, site status, and the combined PDF export.
                   </p>
                 </div>
                 <table className="qa-table">

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { startRun, streamUrl } from "../api";
 import type { HealthSsePayload } from "../types/healthSse";
+import OptionWithTooltip from "../components/OptionWithTooltip";
 import RunProgressBanner, { type RunBannerState } from "../components/RunProgressBanner";
 
 export default function Dashboard({ initialUrls }: { initialUrls?: string }) {
@@ -151,8 +152,14 @@ export default function Dashboard({ initialUrls }: { initialUrls?: string }) {
           y: 0,
         }}
         transition={{ duration: 0.35 }}
-        style={{ padding: 24 }}
+        style={{ padding: 24, overflow: "hidden" }}
       >
+        <div className="qa-panel-head">
+          <h2 className="qa-panel-title">Start a crawl</h2>
+          <p className="qa-panel-subtitle">
+            Paste root URLs (one per line). The crawler discovers same-site pages, checks links, then optionally runs PageSpeed, viewport smoke loads, and Gemini.
+          </p>
+        </div>
         <label className="qa-label-field">Root URLs (one per line)</label>
         <textarea
           className="qa-textarea"
@@ -171,19 +178,31 @@ export default function Dashboard({ initialUrls }: { initialUrls?: string }) {
             opacity: runInFlight ? 0.85 : 1,
           }}
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginTop: 16, alignItems: "center" }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: runInFlight ? "default" : "pointer", color: "var(--muted)" }}>
-            <input type="checkbox" checked={pageSpeedBoth} disabled={runInFlight} onChange={(e) => setPageSpeedBoth(e.target.checked)} />
-            PageSpeed mobile + desktop
-          </label>
-          <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: runInFlight ? "default" : "pointer", color: "var(--muted)" }}>
-            <input type="checkbox" checked={viewportCheck} disabled={runInFlight} onChange={(e) => setViewportCheck(e.target.checked)} />
-            Viewport loads (Chromium)
-          </label>
-          <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: runInFlight ? "default" : "pointer", color: "var(--muted)" }}>
-            <input type="checkbox" checked={gemini} disabled={runInFlight} onChange={(e) => setGemini(e.target.checked)} />
-            Gemini summary
-          </label>
+        <hr className="qa-divider" />
+        <div style={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--muted)", marginBottom: 10 }}>
+          Optional post-crawl steps
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", rowGap: 10 }}>
+          <OptionWithTooltip
+            hint="Calls Google PageSpeed Insights (Lighthouse lab) for each crawled HTML page, twice: mobile and desktop. Adds performance, a11y, best-practices, and SEO scores to reports. Requires PAGESPEED_API_KEY (or GOOGLE_PAGESPEED_API_KEY) on the server. Slower and API-metered—turn off for large crawls."
+          >
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: runInFlight ? "default" : "pointer", color: "var(--muted)" }}>
+              <input type="checkbox" checked={pageSpeedBoth} disabled={runInFlight} onChange={(e) => setPageSpeedBoth(e.target.checked)} />
+              PageSpeed mobile + desktop
+            </label>
+          </OptionWithTooltip>
+          <OptionWithTooltip hint="Opens each URL in local headless Chromium at a phone-sized and a desktop-sized viewport to check that the page loads without hard failures. Lightweight smoke test—not a full Lighthouse audit. Adds a few seconds per URL.">
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: runInFlight ? "default" : "pointer", color: "var(--muted)" }}>
+              <input type="checkbox" checked={viewportCheck} disabled={runInFlight} onChange={(e) => setViewportCheck(e.target.checked)} />
+              Viewport loads (Chromium)
+            </label>
+          </OptionWithTooltip>
+          <OptionWithTooltip hint="After the crawl finishes, sends a compact JSON summary of the run to Google Gemini and saves a short Markdown executive summary (gemini-summary.md) for the run workspace and dashboard. Requires GEMINI_API_KEY or GOOGLE_AI_API_KEY. Does not run PageSpeed for you—it only narrates results.">
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: runInFlight ? "default" : "pointer", color: "var(--muted)" }}>
+              <input type="checkbox" checked={gemini} disabled={runInFlight} onChange={(e) => setGemini(e.target.checked)} />
+              Gemini summary
+            </label>
+          </OptionWithTooltip>
         </div>
         <div style={{ marginTop: 20, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <motion.button
@@ -207,14 +226,12 @@ export default function Dashboard({ initialUrls }: { initialUrls?: string }) {
                   : "Start run"}
           </motion.button>
         </div>
-        <p style={{ color: "var(--muted)", fontSize: "0.8125rem", marginTop: 16, marginBottom: 0 }}>
-          Large sites: turn off PageSpeed / viewport / Gemini for speed. Set <code>QA_AGENT_FETCH_CONCURRENCY</code> in <code>.env</code> for more parallel HTTP.
+        <p className="qa-footnote" style={{ marginTop: 18 }}>
+          Large sites: disable PageSpeed, viewport, or Gemini for faster runs. Tune <code>QA_AGENT_FETCH_CONCURRENCY</code> in <code>.env</code> for heavier parallel HTTP.
         </p>
       </motion.section>
 
-      {err ? (
-        <p style={{ color: "var(--bad)", marginTop: 20 }}>{err}</p>
-      ) : null}
+      {err ? <div className="qa-alert qa-alert--error">{err}</div> : null}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { chromium } from "playwright";
 import pLimit from "p-limit";
+import { isCrawlPageEligibleForLighthouseLab } from "./lab-eligible-crawl-page.js";
 import type { CrawlSiteResult, ViewportCheckRecord } from "./types.js";
 
 const MOBILE = { width: 390, height: 844 };
@@ -68,7 +69,7 @@ export async function attachViewportChecks(
 ): Promise<{ totalDurationMs: number; urlsChecked: number }> {
   const t0 = Date.now();
   const cap = Math.max(1, options.maxUrls);
-  const candidates = crawl.pages.filter((p) => p.ok && p.status === 200).slice(0, cap);
+  const candidates = crawl.pages.filter(isCrawlPageEligibleForLighthouseLab).slice(0, cap);
   const limit = pLimit(Math.max(1, options.concurrency));
 
   const rows: ViewportCheckRecord[] = await Promise.all(

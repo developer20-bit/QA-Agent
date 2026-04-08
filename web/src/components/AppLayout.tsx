@@ -17,29 +17,32 @@ export default function AppLayout() {
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
         style={{
-          width: 260,
+          width: 264,
           flexShrink: 0,
           borderRight: "1px solid var(--border)",
           background: "var(--sidebar-bg)",
-          padding: "16px 0 24px",
+          padding: "12px 0 20px",
           display: "flex",
           flexDirection: "column",
           position: "sticky",
           top: 0,
           alignSelf: "flex-start",
           minHeight: "100vh",
-          boxShadow: "1px 0 0 rgba(9, 30, 66, 0.04)",
+          boxShadow: "1px 0 0 rgba(9, 30, 66, 0.06)",
         }}
       >
         <div className="qa-sidebar-brand">
-          <Link to="/" className="qa-sidebar-brand-title">
-            QA Agent
+          <Link to="/" className="qa-sidebar-brand-row">
+            <span className="qa-app-mark" aria-hidden />
+            <span style={{ minWidth: 0 }}>
+              <span className="qa-sidebar-brand-text">QA Agent</span>
+              <span className="qa-sidebar-brand-sub">Site health &amp; crawl reports</span>
+            </span>
           </Link>
-          <span className="qa-sidebar-brand-sub">Health crawl workspace</span>
         </div>
 
-        <nav style={{ display: "flex", flexDirection: "column", gap: 2 }} aria-label="Main">
-          <div className="qa-nav-section">Navigate</div>
+        <nav style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: 4 }} aria-label="Main">
+          <div className="qa-nav-section">Workspace</div>
           <NavLink to="/" end className={({ isActive }) => `qa-nav-link${isActive ? " qa-nav-link--active" : ""}`}>
             Dashboard
           </NavLink>
@@ -51,37 +54,20 @@ export default function AppLayout() {
           </NavLink>
         </nav>
 
-        <nav style={{ marginTop: 4 }} aria-label="Import">
-          <div className="qa-nav-section">Data</div>
+        <nav style={{ marginTop: 6 }} aria-label="Import">
+          <div className="qa-nav-section">Import</div>
           <NavLink to="/upload" className={({ isActive }) => `qa-nav-link${isActive ? " qa-nav-link--active" : ""}`}>
-            Import URLs
+            URL lists
           </NavLink>
         </nav>
 
-        <div
-          style={{
-            marginTop: "auto",
-            padding: "20px 20px 0",
-            fontSize: "0.75rem",
-            color: "var(--muted)",
-            lineHeight: 1.5,
-          }}
-        >
-          Times use your device timezone. Runs appear when the health server finishes writing artifacts.
+        <div className="qa-sidebar-footer">
+          Times follow your device timezone. Completed runs appear here once the server writes artifacts to disk.
         </div>
       </motion.aside>
 
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <main
-          style={{
-            flex: 1,
-            padding: "28px 32px 64px",
-            maxWidth: 1200,
-            width: "100%",
-            margin: "0 auto",
-            minHeight: 0,
-          }}
-        >
+      <div className="qa-main">
+        <main className="qa-main__inner">
           <motion.div
             key={pathname}
             initial={false}

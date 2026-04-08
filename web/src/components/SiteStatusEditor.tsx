@@ -102,7 +102,9 @@ export default function SiteStatusEditor({ run, onSaved }: { run: HealthRunMeta;
         padding: 20,
       }}
     >
-      <h2 style={{ margin: "0 0 8px", fontSize: "1rem", fontWeight: 600 }}>Sites</h2>
+      <h2 className="qa-panel-title" style={{ margin: "0 0 8px" }}>
+        Sites
+      </h2>
       <p style={{ margin: "0 0 18px", color: "var(--muted)", fontSize: "0.9rem", lineHeight: 1.5 }}>
         <strong style={{ color: "var(--text)" }}>Status</strong> feeds the combined PDF (&quot;Working websites&quot; + EDITED).{" "}
         <strong style={{ color: "var(--text)" }}>Open HTML</strong> is the full crawl with issue triage. Saves to{" "}

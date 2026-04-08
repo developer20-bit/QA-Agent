@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { isCrawlPageEligibleForLighthouseLab } from "./lab-eligible-crawl-page.js";
 import type { CrawlSiteResult, PageFetchRecord, PageSpeedInsightRecord, PageSpeedInsightsBundle } from "./types.js";
 
 const PSI_BASE = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
@@ -17,6 +18,9 @@ function extractGoogleApiErrorMessage(body: string): string | undefined {
 /** Shorter, actionable copy for common Lighthouse/PSI failures. */
 function formatPsiFailureMessage(raw: string): string {
   const t = raw.trim();
+  if (/NOT_HTML/i.test(t)) {
+    return "NOT_HTML — PageSpeed/Lighthouse only analyzes HTML documents, not images or other non-HTML URLs.";
+  }
   if (/NO_FCP/i.test(t)) {
     return (
       "NO_FCP — Lighthouse did not detect a painted frame. Common with cookie/consent overlays, slow third parties, or flaky lab runs. " +
@@ -207,7 +211,8 @@ export function resolvePageSpeedApiKey(): string | undefined {
 const PSI_MAX_URLS_CAP = 500;
 
 /**
- * Runs PageSpeed Insights for up to `maxUrls` successfully crawled HTML pages (HTTP 200, ok).
+ * Runs PageSpeed Insights for up to `maxUrls` successfully crawled **HTML** pages (HTTP 200, ok).
+ * Skips non-HTML responses (e.g. images, PDFs) so the API is not called for URLs Lighthouse cannot analyze.
  * Mutates each matching `PageFetchRecord` with `insights` (single record or mobile/desktop bundle).
  */
 export async function attachPageSpeedInsights(
@@ -222,7 +227,7 @@ export async function attachPageSpeedInsights(
 ): Promise<{ totalDurationMs: number; urlsAnalyzed: number }> {
   const t0 = Date.now();
   const cap = Math.min(options.maxUrls <= 0 ? PSI_MAX_URLS_CAP : options.maxUrls, PSI_MAX_URLS_CAP);
-  const candidates = crawl.pages.filter((p) => p.ok && p.status === 200).slice(0, cap);
+  const candidates = crawl.pages.filter(isCrawlPageEligibleForLighthouseLab).slice(0, cap);
   const strategies = options.strategies.length > 0 ? options.strategies : (["desktop"] as const);
   const limit = pLimit(Math.max(1, options.concurrency));
 

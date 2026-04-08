@@ -47,7 +47,7 @@ export default function ReportsHub() {
         }}
       >
         <Link to="/upload" className="qa-panel" style={{ padding: 16, textDecoration: "none", color: "var(--text)" }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, fontSize: "0.9375rem" }}>Import URLs</div>
+          <div style={{ fontWeight: 600, marginBottom: 6, fontSize: "0.9375rem" }}>URL lists</div>
           <div style={{ fontSize: "0.8125rem", color: "var(--muted)", lineHeight: 1.45 }}>Upload .txt or .pdf, then send to the dashboard.</div>
         </Link>
         <Link to="/history" className="qa-panel" style={{ padding: 16, textDecoration: "none", color: "var(--text)" }}>
@@ -57,11 +57,11 @@ export default function ReportsHub() {
       </div>
 
       <h2 style={{ fontSize: "0.875rem", fontWeight: 600, margin: "32px 0 14px", color: "var(--muted)" }}>Recent reports</h2>
-      {err ? <p style={{ color: "var(--bad)" }}>{err}</p> : null}
+      {err ? <div className="qa-alert qa-alert--error" style={{ marginTop: 8 }}>{err}</div> : null}
       {loading ? (
-        <p style={{ color: "var(--muted)" }}>Loading…</p>
+        <div className="qa-empty">Loading recent reports…</div>
       ) : latest.length === 0 ? (
-        <p style={{ color: "var(--muted)" }}>No runs yet.</p>
+        <div className="qa-empty">No runs yet. Start a crawl from the Dashboard.</div>
       ) : (
         <motion.ul
           initial={{ opacity: 0 }}

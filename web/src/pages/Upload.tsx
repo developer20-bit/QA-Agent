@@ -31,7 +31,7 @@ export default function Upload() {
         Import URL lists
       </motion.h1>
       <p className="qa-page-desc">
-        Upload a <strong>.txt</strong> (one URL per line) or <strong>.pdf</strong> containing links. Bare hostnames like{" "}
+        Upload a <strong>.txt</strong> (one URL per line) or a <strong>.pdf</strong> that contains links. Bare hostnames like{" "}
         <code>nwface.com</code> are normalized to <code>https://nwface.com/</code>.
       </p>
       <label
@@ -52,7 +52,9 @@ export default function Upload() {
         Choose .txt or .pdf
       </label>
       {status ? (
-        <p style={{ marginTop: 16, color: "var(--muted)", fontSize: "0.875rem" }}>{status}</p>
+        <p className="qa-footnote" style={{ marginTop: 16 }}>
+          {status}
+        </p>
       ) : null}
       {urls.length > 0 ? (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ marginTop: 24 }}>
