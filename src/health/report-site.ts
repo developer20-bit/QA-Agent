@@ -8,6 +8,8 @@ import type {
   PageFetchRecord,
   PageSpeedInsightRecord,
   SiteHealthReport,
+  StartPageScreenshotBundle,
+  StartPageScreenshotMeta,
   ViewportCheckRecord,
 } from "./types.js";
 
@@ -322,6 +324,89 @@ const HEALTH_REPORT_CSS = `
       height: auto;
       border-radius: var(--radius-sm);
       border: 1px solid var(--border);
+    }
+    .master-thumbs-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: flex-end;
+      justify-content: flex-start;
+    }
+    .master-thumb-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      min-width: 156px;
+      max-width: 200px;
+    }
+    .master-thumb-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      line-height: 1.2;
+      text-align: center;
+    }
+    .master-thumb--multi {
+      display: block;
+      width: 100%;
+      max-width: 188px;
+      height: auto;
+      max-height: 280px;
+      object-fit: contain;
+      object-position: top center;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .data-table th.th-master-screenshots,
+    .data-table td.master-screenshots-cell {
+      min-width: min(640px, 92vw);
+      width: auto;
+      vertical-align: middle;
+    }
+    .start-page-screenshots-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+      gap: 28px;
+      margin-top: 18px;
+    }
+    .screenshot-device {
+      margin: 0;
+      padding: 18px 18px 20px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface-solid);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .screenshot-device-caption {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .screenshot-device-label {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+    .screenshot-device-meta {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      line-height: 1.35;
+    }
+    .screenshot-device .screenshot-wrap {
+      margin-top: 0;
+    }
+    .screenshot-device--fail .screenshot-fail-msg {
+      margin: 0;
     }
     .report-footer {
       margin-top: 32px;
@@ -640,6 +725,24 @@ const HEALTH_REPORT_CSS = `
         break-inside: avoid;
         page-break-inside: avoid;
       }
+      .screenshot-device {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .start-page-screenshots-grid {
+        grid-template-columns: 1fr;
+        gap: 18px;
+      }
+      .screenshot-device {
+        padding: 12px 12px 14px;
+        box-shadow: none !important;
+      }
+      .screenshot-device-label {
+        font-size: 1.05rem;
+      }
+      .master-thumb--multi {
+        max-height: 220px;
+      }
       .screenshot-img {
         max-width: 100% !important;
         height: auto !important;
@@ -779,6 +882,42 @@ function esc(s: string): string {
     .replaceAll('"', "&quot;");
 }
 
+function isStartPageScreenshotBundle(s: StartPageScreenshotMeta): s is StartPageScreenshotBundle {
+  return "variants" in s && Array.isArray(s.variants);
+}
+
+function buildMasterStartPageThumbs(shot: StartPageScreenshotMeta | undefined, folder: string): string {
+  if (!shot) return "—";
+  if (isStartPageScreenshotBundle(shot)) {
+    const cells = shot.variants.map((v) => {
+      const labelEl = `<span class="master-thumb-label">${esc(v.label)}</span>`;
+      if (v.fileName && !v.error) {
+        const href = `./${esc(folder)}/${esc(v.fileName)}`;
+        return `<div class="master-thumb-cell">
+        <a href="${href}"><img class="master-thumb--multi" src="${href}" alt="${esc(v.label)} screenshot" loading="lazy"/></a>
+        ${labelEl}
+      </div>`;
+      }
+      const errEl = v.error
+        ? `<span class="cell-err" title="${esc(v.error)}">Failed</span>`
+        : `<span class="muted">—</span>`;
+      return `<div class="master-thumb-cell">
+        ${errEl}
+        ${labelEl}
+      </div>`;
+    });
+    return `<div class="master-thumbs-row">${cells.join("")}</div>`;
+  }
+  if (shot.fileName && !shot.error) {
+    const href = `./${esc(folder)}/${esc(shot.fileName)}`;
+    return `<a href="${href}"><img class="master-thumb" src="${href}" alt="" loading="lazy"/></a>`;
+  }
+  if (shot.error) {
+    return `<span class="cell-err" title="${esc(shot.error)}">—</span>`;
+  }
+  return "—";
+}
+
 /** Collapsible body (default open). PDF pipeline forces all sections open before print. */
 function wrapReportSection(title: string, bodyHtml: string): string {
   const t = esc(title);
@@ -798,6 +937,71 @@ ${bodyHtml}
 function buildStartPageScreenshotHtml(c: CrawlSiteResult, startUrl: string): string {
   const s = c.startPageScreenshot;
   if (!s) return "";
+
+  if (isStartPageScreenshotBundle(s)) {
+    if (s.variants.length === 0) return "";
+    const summaryBits = s.variants.map((v) => {
+      const mode = v.fullPage ? "full page" : "viewport";
+      const status =
+        v.fileName && !v.error
+          ? formatDuration(v.durationMs)
+          : v.error
+            ? "failed"
+            : "—";
+      return `${v.label} ${v.viewportWidth}×${v.viewportHeight} · ${mode} · ${status}`;
+    });
+    const headLine = `Headless Chromium · ${summaryBits.join(" · ")} · total ${formatDuration(s.totalDurationMs)}`;
+    const allFailed = s.variants.every((v) => !v.fileName);
+    if (allFailed) {
+      return wrapReportSection(
+        "Start page screenshots (PC, tablet, phone)",
+        `<p class="section-desc">${esc(headLine)} · <a href="${esc(startUrl)}">${esc(startUrl)}</a></p>
+    <div class="start-page-screenshots-grid">
+    ${s.variants
+      .map(
+        (v) => `<figure class="screenshot-device screenshot-device--fail">
+      ${screenshotDeviceCaptionHtml(v)}
+      <p class="cell-err screenshot-fail-msg">Could not capture: ${esc(v.error ?? "unknown error")}</p>
+    </figure>`,
+      )
+      .join("\n    ")}
+    </div>`,
+      );
+    }
+    const figures = s.variants
+      .map((v) => {
+        if (v.error && !v.fileName) {
+          return `<figure class="screenshot-device">
+      ${screenshotDeviceCaptionHtml(v)}
+      <p class="cell-err">Could not capture: ${esc(v.error)}</p>
+    </figure>`;
+        }
+        if (!v.fileName) {
+          return `<figure class="screenshot-device">
+      ${screenshotDeviceCaptionHtml(v)}
+      <p class="meta">No image file</p>
+    </figure>`;
+        }
+        return `<figure class="screenshot-device">
+      ${screenshotDeviceCaptionHtml(v)}
+      <div class="screenshot-wrap">
+        <a href="${esc(v.fileName)}" target="_blank" rel="noopener noreferrer">
+          <img src="${esc(v.fileName)}" alt="${esc(v.label)} screenshot of the start page" class="screenshot-img" loading="lazy"/>
+        </a>
+      </div>
+      ${v.error ? `<p class="meta">Note: ${esc(v.error)}</p>` : ""}
+    </figure>`;
+      })
+      .join("\n    ");
+    return wrapReportSection(
+      "Start page screenshots (PC, tablet, phone)",
+      `<p class="section-desc">${esc(headLine)} · <a href="${esc(startUrl)}">${esc(startUrl)}</a></p>
+    <div class="start-page-screenshots-grid">
+    ${figures}
+    </div>`,
+    );
+  }
+
   const mode = s.fullPage ? "full page" : "viewport";
   const baseDesc = `Headless Chromium · ${s.viewportWidth}×${s.viewportHeight} · ${mode} · capture ${formatDuration(s.durationMs)}`;
   if (s.error && !s.fileName) {
@@ -1496,6 +1700,21 @@ function formatDuration(ms: number): string {
   return `${m}m ${s}s`;
 }
 
+function screenshotDeviceCaptionHtml(v: {
+  label: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  fullPage: boolean;
+  durationMs: number;
+}): string {
+  const mode = v.fullPage ? "full page" : "viewport";
+  const meta = `${v.viewportWidth}×${v.viewportHeight} · ${mode} · ${formatDuration(v.durationMs)}`;
+  return `<figcaption class="screenshot-device-caption">
+      <span class="screenshot-device-label">${esc(v.label)}</span>
+      <span class="screenshot-device-meta">${esc(meta)}</span>
+    </figcaption>`;
+}
+
 function fmtScore(n: number | undefined): string {
   if (n === undefined) return "—";
   return `${n}`;
@@ -2004,16 +2223,10 @@ export function buildMasterHealthHtml(
       const failed = r.crawl.brokenLinks.length > 0 || r.crawl.pages.some((p) => !p.ok);
       const sa = computePageAggregateStats(r.crawl.pages);
       const folder = healthSiteOutputDirName(i, r.startUrl);
-      const shot = r.crawl.startPageScreenshot;
-      const thumb =
-        shot?.fileName && !shot.error
-          ? `<a href="./${esc(folder)}/${esc(shot.fileName)}"><img class="master-thumb" src="./${esc(folder)}/${esc(shot.fileName)}" alt="" loading="lazy"/></a>`
-          : shot?.error
-            ? `<span class="cell-err" title="${esc(shot.error)}">—</span>`
-            : "—";
+      const thumb = buildMasterStartPageThumbs(r.crawl.startPageScreenshot, folder);
       return `<tr data-site-hostname="${esc(r.hostname)}">
   <td>${esc(r.hostname)}</td>
-  <td style="vertical-align:middle;width:1%">${thumb}</td>
+  <td class="master-screenshots-cell">${thumb}</td>
   <td><a href="${esc(r.startUrl)}">${esc(r.startUrl)}</a></td>
   <td class="num">${r.crawl.pagesVisited}</td>
   <td class="num">${r.crawl.brokenLinks.length}</td>
@@ -2088,7 +2301,7 @@ export function buildMasterHealthHtml(
     `<p class="section-desc">Per-site crawl totals and status.</p>
     <div class="table-wrap">
     <table class="data-table">
-      <thead><tr><th>Site</th><th>Start page</th><th>Start URL</th><th class="num">Pages</th><th class="num">Broken</th><th class="num">Avg ms</th><th class="num">OK %</th><th class="num">HTML size</th><th>Status</th><th>Finished</th></tr></thead>
+      <thead><tr><th>Site</th><th class="th-master-screenshots">PC / tablet / phone</th><th>Start URL</th><th class="num">Pages</th><th class="num">Broken</th><th class="num">Avg ms</th><th class="num">OK %</th><th class="num">HTML size</th><th>Status</th><th>Finished</th></tr></thead>
       <tbody>${summaryRows}</tbody>
     </table>
     </div>`,

@@ -8,8 +8,14 @@ import type { HealthRunMeta } from "./orchestrate-health.js";
 import type { HealthProgressEvent } from "./progress-events.js";
 import { renderHtmlFileToPdf } from "./html-to-pdf.js";
 import { parseUrlsFromText } from "./load-urls.js";
+import {
+  buildGeminiPayloadFromReports,
+  generateGeminiRunAnswer,
+  resolveGeminiApiKey,
+} from "./gemini-report.js";
 import { orchestrateHealthCheck } from "./orchestrate-health.js";
 import { extractUrlsFromPdfBuffer } from "./pdf-urls.js";
+import type { SiteHealthReport } from "./types.js";
 
 function webDistRoot(): string {
   return path.join(process.cwd(), "web", "dist");
@@ -280,6 +286,63 @@ async function loadRunMetaById(outRoot: string, runId: string): Promise<HealthRu
   } catch {
     return await loadLegacyRunMeta(runDir, runId);
   }
+}
+
+/** Combined MASTER report JSON next to the HTML (or latest MASTER-all-sites-*.json). */
+async function resolveMasterJsonPath(runDir: string, meta: HealthRunMeta): Promise<string | null> {
+  const href = meta.masterHtmlHref?.trim() ?? "";
+  const norm = href.replace(/^\.\//, "").replace(/\\/g, "/");
+  if (norm.endsWith(".html")) {
+    const jsonRel = `${norm.slice(0, -".html".length)}.json`;
+    const p = path.join(runDir, jsonRel);
+    if (isPathInsideRoot(runDir, p)) {
+      try {
+        const st = await stat(p);
+        if (st.isFile()) return p;
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+  let dirents;
+  try {
+    dirents = await readdir(runDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const jsonFiles = dirents
+    .filter((e) => e.isFile() && e.name.startsWith("MASTER-all-sites-") && e.name.endsWith(".json"))
+    .map((e) => e.name)
+    .sort();
+  if (jsonFiles.length === 0) return null;
+  const pick = jsonFiles[jsonFiles.length - 1] ?? jsonFiles[0];
+  return path.join(runDir, pick);
+}
+
+async function loadGeminiPayloadForRun(outRoot: string, runId: string) {
+  const meta = await loadRunMetaById(outRoot, runId);
+  if (!meta) return null;
+  const runDir = path.join(outRoot, runId);
+  const jsonPath = await resolveMasterJsonPath(runDir, meta);
+  if (!jsonPath || !isPathInsideRoot(runDir, jsonPath)) return null;
+  let raw: string;
+  try {
+    raw = await readFile(jsonPath, "utf8");
+  } catch {
+    return null;
+  }
+  let data: { generatedAt?: string; sites?: SiteHealthReport[] };
+  try {
+    data = JSON.parse(raw) as { generatedAt?: string; sites?: SiteHealthReport[] };
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(data.sites) || data.sites.length === 0) return null;
+  const generatedAt = typeof data.generatedAt === "string" ? data.generatedAt : meta.generatedAt;
+  return buildGeminiPayloadFromReports(data.sites, runId, generatedAt, {
+    pageSpeedSampleLimit: 80,
+    pageSpeedPreferAnalyzed: true,
+  });
 }
 
 const BUFFER_CAP = 2500;
@@ -1113,6 +1176,63 @@ export async function runHealthDashboard(options: {
         } catch {
           res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
           res.end("Not found");
+        }
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/gemini-run-chat") {
+        let body: string;
+        try {
+          body = await readBody(req, 32_000);
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "Bad request" }));
+          return;
+        }
+        let payload: { runId?: unknown; question?: unknown };
+        try {
+          payload = JSON.parse(body) as { runId?: unknown; question?: unknown };
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "Invalid JSON" }));
+          return;
+        }
+        const runIdParam = typeof payload.runId === "string" ? payload.runId : "";
+        const question =
+          typeof payload.question === "string" ? payload.question.trim().slice(0, 4000) : "";
+        if (!runIdParam || !isSafeRunIdSegment(runIdParam)) {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "Bad runId" }));
+          return;
+        }
+        if (!question) {
+          res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "question required" }));
+          return;
+        }
+        if (!resolveGeminiApiKey()) {
+          res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(
+            JSON.stringify({
+              error: "Gemini API key not configured (set GEMINI_API_KEY or GOOGLE_AI_API_KEY for the server process)",
+            }),
+          );
+          return;
+        }
+        const qaPayload = await loadGeminiPayloadForRun(outRoot, runIdParam);
+        if (!qaPayload) {
+          res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: "Run data not found (missing MASTER JSON)" }));
+          return;
+        }
+        try {
+          const answer = await generateGeminiRunAnswer(qaPayload, question);
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+          res.end(JSON.stringify({ answer }));
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ error: msg }));
         }
         return;
       }

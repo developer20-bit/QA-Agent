@@ -136,22 +136,44 @@ export interface CrawlSiteResult {
     totalDurationMs: number;
     urlsChecked: number;
   };
-  /** PNG of the start URL taken with headless Chromium (relative file name under the site output folder). */
+  /** PNGs of the start URL (PC, tablet, phone) taken with headless Chromium. */
   startPageScreenshot?: StartPageScreenshotMeta;
   durationMs: number;
 }
 
-/** Screenshot of the crawl start URL (main page), written next to report HTML. */
-export interface StartPageScreenshotMeta {
-  /** Relative to the site folder, e.g. `start-page.png`. Omitted if capture failed. */
+/** One viewport capture for the crawl start URL. */
+export interface StartPageScreenshotVariant {
+  label: "PC" | "Tablet" | "Phone";
+  /** Relative to the site folder, e.g. `start-page-pc.png`. Omitted if capture failed. */
+  fileName?: string;
+  viewportWidth: number;
+  viewportHeight: number;
+  /** When true, captured full scrollable height (typically PC only). */
+  fullPage: boolean;
+  durationMs: number;
+  error?: string;
+}
+
+/** Current reports: three viewports (PC, tablet, phone). */
+export interface StartPageScreenshotBundle {
+  totalDurationMs: number;
+  variants: StartPageScreenshotVariant[];
+}
+
+/**
+ * Legacy single PNG (`start-page.png`) from older QA-Agent runs.
+ * New runs use {@link StartPageScreenshotBundle}.
+ */
+export interface StartPageScreenshotLegacy {
   fileName?: string;
   durationMs: number;
   viewportWidth: number;
   viewportHeight: number;
-  /** When true, captured full scrollable page (larger file). */
   fullPage: boolean;
   error?: string;
 }
+
+export type StartPageScreenshotMeta = StartPageScreenshotBundle | StartPageScreenshotLegacy;
 
 export interface SiteHealthReport {
   siteId: string;

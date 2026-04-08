@@ -127,7 +127,7 @@ program
   )
   .option(
     "--gemini",
-    "After the run, ask Gemini for an executive Markdown summary (set GEMINI_API_KEY)",
+    "After the run, ask Gemini for an executive Markdown summary (GEMINI_API_KEY or GOOGLE_AI_API_KEY)",
     false,
   )
   .action(

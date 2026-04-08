@@ -75,6 +75,25 @@ export async function fetchGeminiSummary(runId: string): Promise<string | null> 
   return res.text();
 }
 
+/** Short Gemini answer about one run (uses MASTER JSON + API key on server). */
+export async function askGeminiAboutRun(runId: string, question: string): Promise<string> {
+  const res = await fetch("/api/gemini-run-chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ runId, question }),
+  });
+  const text = await res.text();
+  let data: { answer?: string; error?: string };
+  try {
+    data = JSON.parse(text) as { answer?: string; error?: string };
+  } catch {
+    throw new Error(text || res.statusText);
+  }
+  if (!res.ok) throw new Error(data.error ?? (text || res.statusText));
+  if (!data.answer?.trim()) throw new Error("Empty answer");
+  return data.answer.trim();
+}
+
 export async function parseUrlsFile(file: File): Promise<string[]> {
   const fd = new FormData();
   fd.append("file", file);

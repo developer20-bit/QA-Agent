@@ -70,3 +70,81 @@ code {
     background-position: 0% 50%;
   }
 }
+
+/* AI summary / Q&A: Markdown from Gemini */
+.run-markdown {
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.run-markdown :first-child {
+  margin-top: 0;
+}
+
+.run-markdown :last-child {
+  margin-bottom: 0;
+}
+
+.run-markdown h1,
+.run-markdown h2,
+.run-markdown h3 {
+  color: var(--text);
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 1.15em 0 0.45em;
+}
+
+.run-markdown h1 {
+  font-size: 1.12rem;
+}
+
+.run-markdown h2 {
+  font-size: 1.05rem;
+}
+
+.run-markdown h3 {
+  font-size: 0.98rem;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.run-markdown p {
+  margin: 0.55em 0;
+}
+
+.run-markdown ul,
+.run-markdown ol {
+  margin: 0.5em 0;
+  padding-left: 1.35em;
+}
+
+.run-markdown li {
+  margin: 0.25em 0;
+}
+
+.run-markdown li::marker {
+  color: var(--muted);
+}
+
+.run-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.1em 0;
+}
+
+.run-markdown strong {
+  font-weight: 650;
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.run-markdown a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.run-markdown blockquote {
+  margin: 0.6em 0;
+  padding-left: 0.85em;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}

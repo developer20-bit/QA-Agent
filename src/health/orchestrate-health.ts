@@ -322,7 +322,7 @@ export async function orchestrateHealthCheck(options: {
 
   if (options.gemini) {
     if (!resolveGeminiApiKey()) {
-      aiSummary = { skippedReason: "GEMINI_API_KEY not set" };
+      aiSummary = { skippedReason: "Gemini API key not set (GEMINI_API_KEY or GOOGLE_AI_API_KEY)" };
     } else {
       try {
         const cleanReports = results.map((r) => {

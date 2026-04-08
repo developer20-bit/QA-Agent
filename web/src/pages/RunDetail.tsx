@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  askGeminiAboutRun,
   combinedPdfUrl,
   combinedReportHtmlUrl,
   fetchGeminiSummary,
@@ -12,6 +13,7 @@ import {
   type HealthRunMeta,
 } from "../api";
 import JobCard from "../components/JobCard";
+import MarkdownBody from "../components/MarkdownBody";
 import SiteStatusEditor from "../components/SiteStatusEditor";
 
 function decodeRunIdParam(raw: string | undefined): string {
@@ -28,6 +30,10 @@ export default function RunDetail() {
   const runId = decodeRunIdParam(rawParam);
   const [run, setRun] = useState<HealthRunMeta | null>(null);
   const [gemini, setGemini] = useState<string | null>(null);
+  const [runChatQuestion, setRunChatQuestion] = useState("");
+  const [runChatAnswer, setRunChatAnswer] = useState<string | null>(null);
+  const [runChatLoading, setRunChatLoading] = useState(false);
+  const [runChatErr, setRunChatErr] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /** Bumps iframe URL after triage save so combined HTML preview stays fresh. */
@@ -39,6 +45,9 @@ export default function RunDetail() {
     setErr(null);
     setRun(null);
     setGemini(null);
+    setRunChatQuestion("");
+    setRunChatAnswer(null);
+    setRunChatErr(null);
 
     if (!runId.trim()) {
       setErr("Missing run id in the URL.");
@@ -206,7 +215,7 @@ export default function RunDetail() {
                 <div style={{ minWidth: 0, flex: "1 1 240px" }}>
                   <h2 style={{ margin: "0 0 6px", fontSize: "1.15rem", fontWeight: 700 }}>Combined report</h2>
                   <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.9rem", lineHeight: 1.5 }}>
-                    Full all-sites view: start-page screenshots, PageSpeed scores, crawl tables, and triage — same as the legacy combined MASTER report. The preview below reflects saved triage when you export.{" "}
+                    Full all-sites view: PC, tablet, and phone start-page screenshots, PageSpeed scores, crawl tables, and triage — same as the legacy combined MASTER report. The preview below reflects saved triage when you export.{" "}
                     <strong style={{ color: "var(--text)" }}>Download PDF</strong> exports this same combined page (not the separate stats-only summary).
                   </p>
                   <p style={{ margin: "10px 0 0", fontSize: "0.75rem", color: "var(--muted)", fontFamily: "ui-monospace, Menlo, monospace" }}>
@@ -305,27 +314,131 @@ export default function RunDetail() {
                 borderRadius: "var(--radius)",
                 border: "1px solid var(--border)",
                 background: "var(--glass)",
-                lineHeight: 1.6,
+                lineHeight: 1.55,
                 fontSize: "0.95rem",
               }}
             >
-              <h2 style={{ marginTop: 0, fontSize: "1.1rem" }}>Gemini executive summary</h2>
-              <pre
-                style={{
-                  whiteSpace: "pre-wrap",
-                  fontFamily: "inherit",
-                  margin: 0,
-                  color: "var(--text)",
-                }}
-              >
-                {gemini}
-              </pre>
+              <h2 style={{ marginTop: 0, fontSize: "1.1rem" }}>AI summary</h2>
+              <p style={{ margin: "0 0 12px", color: "var(--muted)", fontSize: "0.85rem" }}>
+                Saved when the run was started with Gemini enabled — bullet-style snapshot for a quick read.
+              </p>
+              <MarkdownBody markdown={gemini} />
             </motion.article>
           ) : run.geminiSummaryHref ? (
             <p style={{ color: "var(--muted)", marginTop: 24 }}>Loading AI summary…</p>
           ) : (
-            <p style={{ color: "var(--muted)", marginTop: 24 }}>No AI summary for this run.</p>
+            <p style={{ color: "var(--muted)", marginTop: 24 }}>No saved AI summary for this run (enable Gemini when starting a crawl).</p>
           )}
+
+          <motion.section
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              marginTop: 28,
+              padding: 24,
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--border)",
+              background: "var(--glass)",
+            }}
+          >
+            <h2 style={{ marginTop: 0, marginBottom: 8, fontSize: "1.1rem" }}>Ask about this run</h2>
+            <p style={{ margin: "0 0 14px", color: "var(--muted)", fontSize: "0.88rem", lineHeight: 1.5 }}>
+              Short answers from Gemini using this run’s crawl data (same JSON as the combined report). Needs{" "}
+              <code style={{ fontSize: "0.82em" }}>GEMINI_API_KEY</code> or{" "}
+              <code style={{ fontSize: "0.82em" }}>GOOGLE_AI_API_KEY</code> on the server.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "stretch" }}>
+              <input
+                type="text"
+                value={runChatQuestion}
+                onChange={(e) => setRunChatQuestion(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void (async () => {
+                      const q = runChatQuestion.trim();
+                      if (!q || runChatLoading) return;
+                      setRunChatLoading(true);
+                      setRunChatErr(null);
+                      setRunChatAnswer(null);
+                      try {
+                        const a = await askGeminiAboutRun(run.runId, q);
+                        setRunChatAnswer(a);
+                      } catch (ex) {
+                        setRunChatErr(ex instanceof Error ? ex.message : String(ex));
+                      } finally {
+                        setRunChatLoading(false);
+                      }
+                    })();
+                  }
+                }}
+                placeholder="e.g. Worst mobile Lighthouse pages? Any broken links?"
+                disabled={runChatLoading}
+                style={{
+                  flex: "1 1 220px",
+                  minWidth: 0,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "rgba(0,0,0,0.25)",
+                  color: "var(--text)",
+                  fontSize: "0.92rem",
+                }}
+              />
+              <motion.button
+                type="button"
+                disabled={runChatLoading || !runChatQuestion.trim()}
+                whileHover={{ scale: runChatLoading ? 1 : 1.02 }}
+                whileTap={{ scale: runChatLoading ? 1 : 0.98 }}
+                onClick={() => {
+                  void (async () => {
+                    const q = runChatQuestion.trim();
+                    if (!q) return;
+                    setRunChatLoading(true);
+                    setRunChatErr(null);
+                    setRunChatAnswer(null);
+                    try {
+                      const a = await askGeminiAboutRun(run.runId, q);
+                      setRunChatAnswer(a);
+                    } catch (ex) {
+                      setRunChatErr(ex instanceof Error ? ex.message : String(ex));
+                    } finally {
+                      setRunChatLoading(false);
+                    }
+                  })();
+                }}
+                style={{
+                  padding: "12px 20px",
+                  borderRadius: 10,
+                  border: "none",
+                  fontWeight: 700,
+                  fontSize: "0.9rem",
+                  cursor: runChatLoading || !runChatQuestion.trim() ? "not-allowed" : "pointer",
+                  opacity: runChatLoading || !runChatQuestion.trim() ? 0.55 : 1,
+                  color: "#061018",
+                  background: "linear-gradient(120deg, var(--accent), var(--accent2))",
+                }}
+              >
+                {runChatLoading ? "…" : "Ask"}
+              </motion.button>
+            </div>
+            {runChatErr ? (
+              <p style={{ color: "var(--bad)", marginTop: 14, marginBottom: 0, fontSize: "0.88rem" }}>{runChatErr}</p>
+            ) : null}
+            {runChatAnswer ? (
+              <div
+                style={{
+                  marginTop: 16,
+                  paddingTop: 16,
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                <div style={{ fontSize: "0.92rem" }}>
+                  <MarkdownBody markdown={runChatAnswer} />
+                </div>
+              </div>
+            ) : null}
+          </motion.section>
         </motion.div>
       ) : null}
     </div>
